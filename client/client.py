@@ -22,9 +22,9 @@ myurl = 'http://127.0.0.1:8000'
 userid = ""
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
-if username == "" or not os.path.isdir(f"./{username}"):
+if username == "" or not os.path.isdir(f"./userdata/{username}"):
     username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-    os.mkdir(f"./{username}")
+    os.mkdir(f"./userdata/{username}")
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
@@ -35,27 +35,27 @@ if username == "" or not os.path.isdir(f"./{username}"):
         format=serialization.PrivateFormat.TraditionalOpenSSL,
         encryption_algorithm=serialization.NoEncryption()
     )
-    f_private = open(f"./{username}/private_key.pem", "wb")
+    f_private = open(f"./userdata/{username}/private_key.pem", "wb")
     f_private.write(private_pem)
     public_key = private_key.public_key()
     public_pem = public_key.public_bytes(
        encoding=serialization.Encoding.PEM,
        format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    f_public = open(f"./{username}/public_key.pem", "wb")
+    f_public = open(f"./userdata/{username}/public_key.pem", "wb")
     f_public.write(public_pem)
-    f_username = open(f"./{username}/username.txt", "w")
+    f_username = open(f"./userdata/{username}/username.txt", "w")
     f_username.write(username)
     response = requests.post(f"{myurl}/add-user", json={
         "username": username,
         "public_key": public_pem.decode()
     })
     userid = str(response.json()["userid"])
-    f_userid = open(f"./{username}/userid.txt", "w")
+    f_userid = open(f"./userdata/{username}/userid.txt", "w")
     f_userid.write(userid)
 else:
-    userid = open(f"./{username}/userid.txt", "r").readline()
-    username = open(f"./{username}/username.txt", "r").readline()
+    userid = open(f"./userdata/{username}/userid.txt", "r").readline()
+    username = open(f"./userdata/{username}/username.txt", "r").readline()
     
     
 
