@@ -37,11 +37,18 @@ async def get_users():
 
     return Response(status_code=200, content=json.dumps(response_content))
 
-@app.get("/files")
-async def get_files(user: int):
+@app.get("/messages")
+async def get_messages(user: int):
     response_content = []
     messages = Message.select().where(Message.recipient == user)
     for message in messages:
-        response_content.append({"id": message.id, "sender": message.sender.username, "file": message.file.content.decode().replace("'", '"')})
+        response_content.append({"id": message.id, "sender": message.sender.username})
 
     return Response(status_code=200, content=json.dumps(response_content))
+
+@app.get("/file")
+async def get_file(message_id: int):
+    file = File.select().where(File.id == message_id)
+    if len(file)!= 1:
+        return Response(status_code=404, content="No such file")
+    return Response(status_code=200, content=file[0].content)
