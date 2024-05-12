@@ -7,13 +7,15 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
+from sympy import content
 import typer
 from rich.prompt import Prompt
 from rich.prompt import Confirm
 from rich import print
-
+import base64
 from rich.console import Console
 from rich.table import Table
+import secrets
 
 console = Console()
 
@@ -25,11 +27,8 @@ myurl = 'http://127.0.0.1:8000'
 userid = ""
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
-if username == "" or not os.path.isdir(f"./userdata/{username}"):
-    username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-    if not os.path.isdir(f"./userdata"):
-        os.mkdir("./userdata")
-    os.mkdir(f"./userdata/{username}")
+
+def createPublicPrivateKeys():
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
@@ -47,22 +46,83 @@ if username == "" or not os.path.isdir(f"./userdata/{username}"):
        encoding=serialization.Encoding.PEM,
        format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    f_public = open(f"./userdata/{username}/public_key.pem", "wb")
-    f_public.write(public_pem)
-    f_username = open(f"./userdata/{username}/username.txt", "w")
-    f_username.write(username)
-    response = requests.post(f"{myurl}/add-user", json={
-        "username": username,
-        "public_key": public_pem.decode()
-    })
-    userid = str(response.json()["userid"])
-    f_userid = open(f"./userdata/{username}/userid.txt", "w")
-    f_userid.write(userid)
-else:
-    userid = open(f"./userdata/{username}/userid.txt", "r").readline()
-    username = open(f"./userdata/{username}/username.txt", "r").readline()
+
+    return public_pem
+
+def getAndPrintUsers():
+    users = requests.get(f"{myurl}/users").json()
+    users = list(filter(lambda x: x["id"]!= int(userid), users))
+    table = Table("No. ", "Username", "UserID")
+    for index, user in enumerate(users):
+        table.add_row(str(index+1), str(user["username"]), str(user["id"]))
+    console.print(table)
+    return users
+
+
+def createSharedKey():
+    sender_random_key = secrets.token_bytes(16)
+
+    return sender_random_key
+
+
+
+
+def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
+    # Encryption
+    s_encrypted_key = r_public_key.encrypt(
+        sharedKey,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    # Signature - PSS
+    s_signature = s_private_key.sign(
+        s_encrypted_key,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+
+    # Encoding
+    s_encoded_key_ciphertext = base64.b64encode(s_encrypted_key).decode('utf-8')
+    s_encoded_signature = base64.b64encode(s_signature).decode('utf-8')
+
+    return s_encoded_key_ciphertext, s_encoded_signature
+
+
+def checkIfUser(username):
+    if username == "" or not os.path.isdir(f"./userdata/{username}"):
+        username = Prompt.ask("[bold green]Enter your new username![/bold green]")
+        if not os.path.isdir(f"./userdata"):
+            os.mkdir("./userdata")
+        os.mkdir(f"./userdata/{username}")
     
-    
+        public_pem = createPublicPrivateKeys()
+
+        f_public = open(f"./userdata/{username}/public_key.pem", "wb")
+        f_public.write(public_pem)
+        f_username = open(f"./userdata/{username}/username.txt", "w")
+        f_username.write(username)
+        response = requests.post(f"{myurl}/add-user", json={
+            "username": username,
+            "public_key": public_pem.decode()
+        })
+        userid = str(response.json()["userid"])
+        f_userid = open(f"./userdata/{username}/userid.txt", "w")
+        f_userid.write(userid)
+    else:
+        userid = open(f"./userdata/{username}/userid.txt", "r").readline()
+        username = open(f"./userdata/{username}/username.txt", "r").readline()
+
+
+
+
+checkIfUser(username)
 
 while True:
     table = Table("Option", "Description")
@@ -106,12 +166,7 @@ while True:
             f.close()
 
     if choice == "send":
-        users = requests.get(f"{myurl}/users").json()
-        users = list(filter(lambda x: x["id"]!= int(userid), users))
-        table = Table("No. ", "Username", "UserID")
-        for index, user in enumerate(users):
-            table.add_row(str(index+1), str(user["username"]), str(user["id"]))  
-        console.print(table)
+        users = getAndPrintUsers()
         option = Prompt.ask("Please choose a user (enter 'cancel' to cancel)")
         if option == "cancel":
             continue
@@ -120,22 +175,28 @@ while True:
         recipient_public_key = serialization.load_pem_public_key(
             recipient_public_key_string.encode("utf-8"),
         )
+
+        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend()
+            )
+
+        sender_random_key = createSharedKey()
+
+        encrypted_key, s_signature = encryptSignSharedKey(sender_random_key, recipient_public_key, private_key)
+
+
         print("Please choose a file:")
         filename = askopenfilename()
         file = open(filename, 'rb')
         file_content = file.read()
-        content_ciphertext = recipient_public_key.encrypt(
-            file_content,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
+
         encrypted_file = open(filename + ".tmp", "wb")
-        encrypted_file.write(bytes(content_ciphertext))
+        encrypted_file.write(bytes(file_content))
         encrypted_file.close()
         file = {'file': open(filename + ".tmp", 'rb')}
-        requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}", files=file)
+        requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}", files=file)
         os.remove(filename + ".tmp")
         print("File sent!")
