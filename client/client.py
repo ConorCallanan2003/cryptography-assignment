@@ -83,11 +83,76 @@ while True:
         file_response = requests.get(f"{myurl}/file?message_id={chosen_id}")
         file_ciphertext = file_response.content
         file_plaintext = ""
-        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None,
-            )
+        
+        # checks if it has a shared key locally,
+        # if not checks if corresponding key is in key table, if so, decrypts it from key table and saves it locally, 
+        # else uses private key to decrypt file
+
+        shared_key_exists = False
+        sender_name = ""
+        sender_id = -1
+        for message in messages:
+            if message["id"] == chosen_id:
+                sender_name = message["sender"]
+                break
+        users = requests.get(f"{myurl}/users").json()
+        for user in users:
+            if user["username"] == sender_name:
+                sender_id = user["id"]
+                break
+            else:
+                print("Error 404: User not found")
+
+        if os.path.isfile(f"./userdata/{username}/{sender_name}_shared_key.pem"):
+            with open(f"./userdata/{username}/{sender_name}_shared_key.pem", 'r') as shared_key_file:
+                shared_key = shared_key_file.read()
+            shared_key_exists = True
+            
+        else:
+            key_response = requests.get(f"{myurl}/get-shared-key", params={
+                "sender": sender_id,
+                "recipient": userid
+            })
+            encrypted_key = None
+            if key_response.status_code == 200:
+                encrypted_key = key_response.json()["shared_key"]
+                shared_key_exists = True
+
+            if encrypted_key is not None:
+                # shared_key = Decrypt(Validate(EncryptedKey2, PublicKey1), SecretKey2)
+                sender_public_key_string = users["sender_id"]["public_key"]
+                sender_public_key = serialization.load_pem_public_key(
+                    sender_public_key_string.encode("utf-8"),
+                )
+                decrypt_signed_key = sender_public_key.decrypt(
+                    encrypted_key,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
+                )
+
+                with open(f"./userdata/{username}/private_key.pem", "rb") as private_key_file:
+                    private_key = serialization.load_pem_private_key(
+                        private_key_file.read(),
+                        password=None,
+                    )
+                    shared_key_plaintext = private_key.decrypt(
+                        decrypt_signed_key,
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None
+                        )
+                    )
+                # need the key serialised as bytes?
+                f_shared_key = open(f"./userdata/{username}/{sender_name}_shared_key.pem", "x")
+                f_shared_key.write(shared_key_plaintext)
+                f_shared_key.close()
+                shared_key = shared_key_plaintext
+
+        if shared_key_exists:
             file_plaintext = private_key.decrypt(
                 file_ciphertext,
                 padding.OAEP(
@@ -96,6 +161,21 @@ while True:
                     label=None
                 )
             )
+
+        else:
+            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,
+                )
+                file_plaintext = private_key.decrypt(
+                    file_ciphertext,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
+                )
         print("[bold]File Content:\n[/bold]")
         print("\n")
         print(file_plaintext)
