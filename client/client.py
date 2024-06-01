@@ -28,7 +28,7 @@ userid = ""
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
 
-def createPublicPrivateKeys():
+def createPublicPrivateKeys(username):
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
@@ -102,7 +102,7 @@ def checkIfUser(username):
             os.mkdir("./userdata")
         os.mkdir(f"./userdata/{username}")
     
-        public_pem = createPublicPrivateKeys()
+        public_pem = createPublicPrivateKeys(username)
 
         f_public = open(f"./userdata/{username}/public_key.pem", "wb")
         f_public.write(public_pem)
@@ -118,11 +118,12 @@ def checkIfUser(username):
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
+    return userid
 
 
 
 
-checkIfUser(username)
+userid = checkIfUser(username)
 
 while True:
     table = Table("Option", "Description")
@@ -167,7 +168,7 @@ while True:
 
     if choice == "send":
         users = getAndPrintUsers()
-        option = Prompt.ask("Please choose a user (enter 'cancel' to cancel)")
+        option = Prompt.ask("Please choose the number of the receiving user (enter 'cancel' to cancel)")
         if option == "cancel":
             continue
         recipient = users[int(option)-1]["id"]
