@@ -12,7 +12,7 @@ import typer
 from rich.prompt import Prompt
 from rich.prompt import Confirm
 from rich import print
-
+import base64
 from rich.console import Console
 from rich.table import Table
 import secrets
@@ -88,7 +88,11 @@ def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
         hashes.SHA256()
     )
 
-    return s_encrypted_key, s_signature
+    # Encoding
+    s_encoded_key_ciphertext = base64.b64encode(s_encrypted_key).decode('utf-8')
+    s_encoded_signature = base64.b64encode(s_signature).decode('utf-8')
+
+    return s_encoded_key_ciphertext, s_encoded_signature
 
 
 def checkIfUser(username):
