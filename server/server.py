@@ -1,15 +1,23 @@
+from inspect import signature
 from fastapi.responses import FileResponse
 from db import *
 from fastapi import FastAPI, Response, UploadFile
 import json
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
+from fastapi.exceptions import HTTPException
 
 app = FastAPI()
 
 class UserModel(BaseModel):
     username: str
     public_key: str
+
+class MessageModel(BaseModel):
+    sender: int
+    recipient: int
+    file: int
+    shared_key : str
 
 
 @app.post("/add-user")
@@ -23,7 +31,7 @@ async def create_user(user: UserModel):
 async def create_upload_file(file: UploadFile, sender: int, recipient: int):
     content = await file.read()
     newFile = File.create(content=content)
-    newMessage = Message.create(sender=sender, recipient=recipient, file=newFile.id)
+    newMessage = Message.create(sender=sender, recipient=recipient, file=newFile.id, shared_key="shared_key")
     newFile.save()
     newMessage.save()
     return Response(status_code=200, content=f"Success: File sent")
