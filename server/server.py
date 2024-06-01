@@ -1,11 +1,11 @@
-from inspect import signature
-from fastapi.responses import FileResponse
+import json
+import time
+import os
 from db import *
 from fastapi import FastAPI, Response, UploadFile
-import json
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
-from fastapi.exceptions import HTTPException
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 app = FastAPI()
 
@@ -18,13 +18,81 @@ class MessageModel(BaseModel):
     recipient: int
     file: int
     shared_key : str
-    
 
-@app.post("/add-user")
+
+class SignInDetails(BaseModel):
+    username: str
+    password: str
+
+class AuthenticatedRequest(BaseModel):
+    jwt: str
+
+class SendFileRequest(AuthenticatedRequest):
+    file: UploadFile
+    recipient: int
+
+
+
+@app.post("/create-user")
 async def create_user(user: UserModel):
+    # Add regex password validation
     newUser = User.create(username = user.username, public_key = user.public_key)
     newUser.save()
+    salt = os.urandom(16)
+    kdf = Scrypt(
+        salt=salt,
+        length=32,
+        n=2**14,
+        r=8,
+        p=1,
+    )
+    digest = kdf.derive(str.encode(user.password))
+    newPassword = Password.create(user = newUser.id, hashed_pw = digest, salt = salt)
+    newPassword.save()
     return Response(status_code=200, content=json.dumps({"userid": newUser.id}))
+
+@app.post("/sign-in")
+async def sign_in(sign_in_details: SignInDetails):
+    start = time.time()
+    user = User.get_or_none(User.username == sign_in_details.username)
+    if user == None:
+        end = time.time()
+        if (end - start < 0.5):
+            time.sleep(0.5 - (end - start))
+    user_password = Password.get_or_none(Password.user == user.id)
+    if user_password == None:
+        end = time.time()
+        if (end - start < 0.5):
+            time.sleep(0.5 - (end - start))
+    kdf = Scrypt(
+        salt=user_password.salt,
+        length=32,
+        n=2**14,
+        r=8,
+        p=1,
+    )
+    kdf.verify(str.encode(sign_in_details.password), user_password.hashed_pw)
+
+    session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "count": 0}, jwt_secret, algorithm="HS256")
+
+    end = time.time()
+
+    if (end - start < 0.5):
+        time.sleep(0.5 - (end - start))
+
+    return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
+
+@app.post("/send-file")
+async def create_upload_file(body: SendFileRequest):
+    file = body.file
+    jwt_data = jwt.decode(body.jwt, jwt_secret, algorithms="HS256")
+    sender_id = jwt_data[""]
+    content = await file.read()
+    newFile = File.create(content=content)
+    newMessage = Message.create(sender=sender, recipient=recipient, file=newFile.id)
+    newFile.save()
+    newMessage.save()
+    return Response(status_code=200, content=f"Success: File sent")
 
 
 @app.post("/send-file")
