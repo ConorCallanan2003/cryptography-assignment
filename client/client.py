@@ -49,6 +49,7 @@ def createPublicPrivateKeys():
 
     return public_pem
 
+
 def getAndPrintUsers():
     users = requests.get(f"{myurl}/users").json()
     users = list(filter(lambda x: x["id"]!= int(userid), users))
@@ -60,11 +61,9 @@ def getAndPrintUsers():
 
 
 def createSharedKey():
-    sender_random_key = secrets.token_bytes(16)
+    sender_random_key = os.urandom(16)
 
     return sender_random_key
-
-
 
 
 def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
@@ -90,8 +89,20 @@ def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
 
     return s_encrypted_key, s_signature
 
+def encryptSymmetric(symmetricKey, content):
+    nonce = ""
+    encrypted_content = content
+    return nonce, encrypted_content
 
-def checkIfUser(username):
+def decryptSymmetric(symmetricKey, encrypted_content, nonce):
+    nonce = ""
+    content = encrypted_content
+    return content
+
+
+def checkIfUser():
+    global username
+    global userid
     if username == "" or not os.path.isdir(f"./userdata/{username}"):
         username = Prompt.ask("[bold green]Enter your new username![/bold green]")
         if not os.path.isdir(f"./userdata"):
@@ -109,90 +120,103 @@ def checkIfUser(username):
             "public_key": public_pem.decode()
         })
         userid = str(response.json()["userid"])
-        f_userid = open(f"./userdata/{username}/userid.txt", "w")
-        f_userid.write(userid)
+        userid_file = open(f"./userdata/{username}/userid.txt", "w")
+        userid_file.write(userid)
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
 
-
-
-
-checkIfUser(username)
+checkIfUser()
 
 while True:
     table = Table("Option", "Description")
     table.add_row("read", "See files sent to you")
     table.add_row("send", "Send a file to someone else")
+    table.add_row("logout", "Sign out of this account")
     console.print(table)
 
     choice = Prompt.ask("What would you like to do?")
 
     if choice == "read":
-        response = requests.get(f"{myurl}/messages?user={userid}")
-        messages = response.json()
-        table = Table("ID", "Sender")
-        for message in messages:
-            table.add_row(str(message["id"]), str(message["sender"]))
-        console.print(table)
-        chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
-        file_response = requests.get(f"{myurl}/file?message_id={chosen_id}")
-        file_ciphertext = file_response.content
-        file_plaintext = ""
-        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None,
-            )
-            file_plaintext = private_key.decrypt(
-                file_ciphertext,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
+        try:
+            response = requests.get(f"{myurl}/messages?user={userid}")
+            messages = response.json()
+            table = Table("ID", "Sender")
+            for message in messages:
+                table.add_row(str(message["id"]), str(message["sender"]))
+            console.print(table)
+            chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
+            file_response = requests.get(f"{myurl}/file?message_id={chosen_id}")
+            encrypted_shared_secret = file_response.json()["shared_secret"]
+            nonce = file_response.json()["nonce"]
+            file_ciphertext = file_response.content
+            file_plaintext = ""
+            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,
                 )
-            )
-        print("[bold]File Content:\n[/bold]")
-        print("\n")
-        print(file_plaintext)
-        print("\n")
-        if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
-            f = asksaveasfile(mode='wb')
-            f.write(file_plaintext)
-            f.close()
+                symmetric_key = private_key.decrypt(
+                    encrypted_shared_secret,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
+                )
+                file_content = decryptSymmetric(symmetric_key, file_ciphertext, nonce)
+            print("[bold]File Content:\n[/bold]")
+            print("\n")
+            print(file_plaintext)
+            print("\n")
+            if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
+                f = asksaveasfile(mode='wb')
+                f.write(file_plaintext)
+                f.close()
+        except:
+            print("\nSomething went wrong...\n")
+            continue
 
     if choice == "send":
-        users = getAndPrintUsers()
-        option = Prompt.ask("Please choose a user (enter 'cancel' to cancel)")
-        if option == "cancel":
-            continue
-        recipient = users[int(option)-1]["id"]
-        recipient_public_key_string = users[int(option)-1]["public_key"]
-        recipient_public_key = serialization.load_pem_public_key(
-            recipient_public_key_string.encode("utf-8"),
-        )
-
-        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None,
-                backend=default_backend()
+        try:
+            users = getAndPrintUsers()
+            option = Prompt.ask("Please choose a user (enter 'cancel' to cancel)")
+            if option == "cancel":
+                continue
+            recipient = users[int(option)-1]["id"]
+            recipient_public_key_string = users[int(option)-1]["public_key"]
+            recipient_public_key = serialization.load_pem_public_key(
+                recipient_public_key_string.encode("utf-8"),
             )
 
-        sender_random_key = createSharedKey()
+            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,
+                    backend=default_backend()
+                )
 
-        encrypted_key, s_signature = encryptSignSharedKey(sender_random_key, recipient_public_key, private_key)
+            symmetric_key = createSharedKey()
 
+            encrypted_key, s_signature = encryptSignSharedKey(symmetric_key, recipient_public_key, private_key)
 
-        print("Please choose a file:")
-        filename = askopenfilename()
-        file = open(filename, 'rb')
-        file_content = file.read()
+            print("Please choose a file:")
+            filename = askopenfilename()
+            file = open(filename, 'rb')
+            file_content = file.read()
+            encrypted_file = open(filename + ".tmp", "wb")
+            nonce, encrypted_file_content = encryptSymmetric(symmetric_key, file_content)
+            encrypted_file.write(bytes(encrypted_file_content))
+            encrypted_file.close()
+            file = {'file': open(filename + ".tmp", 'rb')}
+            requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}", files=file)
+            os.remove(filename + ".tmp")
+            print("File sent!")
+        except:
+            print("\nSomething went wrong...\n")
+            continue
 
-        encrypted_file = open(filename + ".tmp", "wb")
-        encrypted_file.write(bytes(file_content))
-        encrypted_file.close()
-        file = {'file': open(filename + ".tmp", 'rb')}
-        requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}", files=file)
-        os.remove(filename + ".tmp")
-        print("File sent!")
+    if choice == "logout":
+        userid = ""
+        username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
+        checkIfUser()

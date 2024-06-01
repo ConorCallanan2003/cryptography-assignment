@@ -18,7 +18,7 @@ class MessageModel(BaseModel):
     recipient: int
     file: int
     shared_key : str
-
+    
 
 @app.post("/add-user")
 async def create_user(user: UserModel):
@@ -48,6 +48,7 @@ async def get_users():
 @app.get("/messages")
 async def get_messages(user: int):
     response_content = []
+    print(user)
     messages = Message.select().where(Message.recipient == user)
     for message in messages:
         response_content.append({"id": message.id, "sender": message.sender.username})
