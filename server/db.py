@@ -8,6 +8,15 @@ class User(Model):
 
     class Meta:
         database = db
+        
+class Password(Model):
+    user = ForeignKeyField(User, backref="hashed_pw")
+    hashed_pw = CharField()
+    salt = CharField()
+
+    class Meta:
+        database = db
+
 
 class File(Model):
     content = BlobField()

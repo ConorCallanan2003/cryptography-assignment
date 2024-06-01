@@ -1,6 +1,8 @@
 import json
 import time
 import os
+import jwt
+import base64
 from db import *
 from fastapi import FastAPI, Response, UploadFile
 from playhouse.shortcuts import model_to_dict
@@ -9,8 +11,9 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 app = FastAPI()
 
-class UserModel(BaseModel):
+class CreateUserModel(BaseModel):
     username: str
+    password: str
     public_key: str
 
 class MessageModel(BaseModel):
@@ -18,7 +21,6 @@ class MessageModel(BaseModel):
     recipient: int
     file: int
     shared_key : str
-
 
 class SignInDetails(BaseModel):
     username: str
@@ -32,9 +34,8 @@ class SendFileRequest(AuthenticatedRequest):
     recipient: int
 
 
-
 @app.post("/create-user")
-async def create_user(user: UserModel):
+async def create_user(user: CreateUserModel):
     # Add regex password validation
     newUser = User.create(username = user.username, public_key = user.public_key)
     newUser.save()
@@ -47,9 +48,9 @@ async def create_user(user: UserModel):
         p=1,
     )
     digest = kdf.derive(str.encode(user.password))
-    newPassword = Password.create(user = newUser.id, hashed_pw = digest, salt = salt)
+    newPassword = Password.create(user=newUser.id, hashed_pw=base64.b64encode(digest), salt=base64.b64encode(salt))
     newPassword.save()
-    return Response(status_code=200, content=json.dumps({"userid": newUser.id}))
+    return Response(status_code=200, content=json.dumps({"status": "Success", "message": "New user has been created!", "userid": newUser.id}))
 
 @app.post("/sign-in")
 async def sign_in(sign_in_details: SignInDetails):
@@ -71,7 +72,7 @@ async def sign_in(sign_in_details: SignInDetails):
         r=8,
         p=1,
     )
-    kdf.verify(str.encode(sign_in_details.password), user_password.hashed_pw)
+    kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
 
     session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "count": 0}, jwt_secret, algorithm="HS256")
 
@@ -89,7 +90,7 @@ async def create_upload_file(body: SendFileRequest):
     sender_id = jwt_data[""]
     content = await file.read()
     newFile = File.create(content=content)
-    newMessage = Message.create(sender=sender, recipient=recipient, file=newFile.id)
+    newMessage = Message.create(sender=sender_id, recipient=body.recipient, file=newFile.id)
     newFile.save()
     newMessage.save()
     return Response(status_code=200, content=f"Success: File sent")
@@ -129,3 +130,7 @@ async def get_file(message_id: int):
     if len(file)!= 1:
         return Response(status_code=404, content="No such file")
     return Response(status_code=200, content=file[0].content)
+
+@app.get("/test")
+async def test():
+    return Response(status_code=200, content="Server is running")
