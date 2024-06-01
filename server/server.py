@@ -1,13 +1,17 @@
 import json
 import time
 import os
+from datetime import datetime
+from typing import Annotated
 import jwt
 import base64
 from db import *
-from fastapi import FastAPI, Response, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Header, Response, UploadFile
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+jwt_secret = os.urandom(32)
 
 app = FastAPI()
 
@@ -30,15 +34,28 @@ class AuthenticatedRequest(BaseModel):
     jwt: str
 
 class SendFileRequest(AuthenticatedRequest):
-    file: UploadFile
     recipient: int
-
+    
+def authenticate_jwt(auth_token):
+    try:
+        session_details = jwt.decode(auth_token, jwt_secret, algorithms="HS256")
+    except:
+        return Response(status_code=401, content=f"Error: Invalid authentication token")
+    exp =  session_details["exp"]
+    exp_dt = datetime.fromtimestamp(exp/1000.0)
+    if (exp_dt > datetime.now()):
+        return Response(status_code=401, content=f"Error: Authentication token expired")
+    print(session_details)
+    return session_details
 
 @app.post("/create-user")
 async def create_user(user: CreateUserModel):
     # Add regex password validation
-    newUser = User.create(username = user.username, public_key = user.public_key)
-    newUser.save()
+    try:
+        newUser = User.create(username = user.username, public_key = user.public_key)
+        newUser.save()
+    except:
+        raise HTTPException(status_code=500, detail="Username already exists")
     salt = os.urandom(16)
     kdf = Scrypt(
         salt=salt,
@@ -60,21 +77,26 @@ async def sign_in(sign_in_details: SignInDetails):
         end = time.time()
         if (end - start < 0.5):
             time.sleep(0.5 - (end - start))
+        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
     user_password = Password.get_or_none(Password.user == user.id)
-    if user_password == None:
+    if user_password is None:
         end = time.time()
         if (end - start < 0.5):
             time.sleep(0.5 - (end - start))
+        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
     kdf = Scrypt(
-        salt=user_password.salt,
+        salt=base64.b64decode(user_password.salt),
         length=32,
         n=2**14,
         r=8,
         p=1,
     )
-    kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
+    try:
+        kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
+    except:
+        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
 
-    session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "count": 0}, jwt_secret, algorithm="HS256")
+    session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
 
     end = time.time()
 
@@ -83,30 +105,26 @@ async def sign_in(sign_in_details: SignInDetails):
 
     return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
 
-@app.post("/send-file")
-async def create_upload_file(body: SendFileRequest):
-    file = body.file
-    jwt_data = jwt.decode(body.jwt, jwt_secret, algorithms="HS256")
-    sender_id = jwt_data[""]
-    content = await file.read()
-    newFile = File.create(content=content)
-    newMessage = Message.create(sender=sender_id, recipient=body.recipient, file=newFile.id)
-    newFile.save()
-    newMessage.save()
-    return Response(status_code=200, content=f"Success: File sent")
-
 
 @app.post("/send-file")
-async def create_upload_file(file: UploadFile, sender: int, recipient: int):
+async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
+    auth_token = Authorization.replace("Bearer ", "")
+    session_details = authenticate_jwt(auth_token)
+    if (isinstance(session_details, Response)):
+        return session_details
     content = await file.read()
     newFile = File.create(content=content)
-    newMessage = Message.create(sender=sender, recipient=recipient, file=newFile.id, shared_key="shared_key")
+    newMessage = Message.create(sender=session_details["user_id"], recipient=recipient, file=newFile.id, shared_key="shared_key")
     newFile.save()
     newMessage.save()
     return Response(status_code=200, content=f"Success: File sent")
 
 @app.get("/users")
-async def get_users():
+async def get_users(Authorization: Annotated[str, Header()]):
+    auth_token = Authorization.replace("Bearer ", "")
+    session_details = authenticate_jwt(auth_token)
+    if (isinstance(session_details, Response)):
+        return session_details
     response_content = []
     users = User.select()
     for user in users:
@@ -115,9 +133,13 @@ async def get_users():
     return Response(status_code=200, content=json.dumps(response_content))
 
 @app.get("/messages")
-async def get_messages(user: int):
+async def get_messages(Authorization: Annotated[str, Header()]):
+    auth_token = Authorization.replace("Bearer ", "")
+    session_details = authenticate_jwt(auth_token)
+    if (isinstance(session_details, Response)):
+        return session_details
+    user =  session_details["user_id"]
     response_content = []
-    print(user)
     messages = Message.select().where(Message.recipient == user)
     for message in messages:
         response_content.append({"id": message.id, "sender": message.sender.username})
@@ -125,7 +147,11 @@ async def get_messages(user: int):
     return Response(status_code=200, content=json.dumps(response_content))
 
 @app.get("/file")
-async def get_file(message_id: int):
+async def get_file(message_id: int, Authorization: Annotated[str, Header()]):
+    auth_token = Authorization.replace("Bearer ", "")
+    session_details = authenticate_jwt(auth_token)
+    if (isinstance(session_details, Response)):
+        return session_details
     file = File.select().where(File.id == message_id)
     if len(file)!= 1:
         return Response(status_code=404, content="No such file")

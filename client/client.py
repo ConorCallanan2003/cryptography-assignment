@@ -1,7 +1,8 @@
 import requests
+import os
+import jwt
 from tkinter.filedialog import askopenfilename
 from tkinter.filedialog import asksaveasfile
-import os
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
@@ -27,6 +28,7 @@ myurl = 'http://127.0.0.1:8000'
 userid = ""
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
+session_jwt = ""
 
 def createPublicPrivateKeys():
     private_key = rsa.generate_private_key(
@@ -51,7 +53,7 @@ def createPublicPrivateKeys():
 
 
 def getAndPrintUsers():
-    users = requests.get(f"{myurl}/users").json()
+    users = requests.get(f"{myurl}/users", headers={"Authorization": "Bearer " + session_jwt}).json()
     users = list(filter(lambda x: x["id"]!= int(userid), users))
     table = Table("No. ", "Username", "UserID")
     for index, user in enumerate(users):
@@ -103,8 +105,13 @@ def decryptSymmetric(symmetricKey, encrypted_content, nonce):
 def checkIfUser():
     global username
     global userid
-    if username == "" or not os.path.isdir(f"./userdata/{username}"):
+    newUser = False
+    if not os.path.isdir(f"./userdata/{username}"):
+        print("User does not exist. \n")
+        newUser = True
+    if username == "" or newUser:
         username = Prompt.ask("[bold green]Enter your new username![/bold green]")
+        password = Prompt.ask("[bold red]Enter your new password![/bold red]")
         if not os.path.isdir(f"./userdata"):
             os.mkdir("./userdata")
         os.mkdir(f"./userdata/{username}")
@@ -115,23 +122,44 @@ def checkIfUser():
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
-        response = requests.post(f"{myurl}/add-user", json={
+        response = requests.post(f"{myurl}/create-user", json={
             "username": username,
-            "public_key": public_pem.decode()
+            "public_key": public_pem.decode(),
+            "password": password
         })
         userid = str(response.json()["userid"])
         userid_file = open(f"./userdata/{username}/userid.txt", "w")
         userid_file.write(userid)
+        print("[bold blue]New user has been created![/bold blue]")
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
 
+def signIn(username, password):
+    global session_jwt
+    response = requests.post(f"{myurl}/sign-in", json={"username": username, "password": password})
+    if response.status_code != 200:
+        print("\n[bold red]Error signing in...[/bold red]\n")
+    session_jwt = response.json()["jwt"]
+    print(session_jwt)
+
 checkIfUser()
 
+password = Prompt.ask("Enter your password: ")
+
+signIn(username, password)
+
 while True:
+    if session_jwt == "":
+        print("Invalid session token. Please try logging out and logging in again.")
+    
+    session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+        
     table = Table("Option", "Description")
-    table.add_row("read", "See files sent to you")
-    table.add_row("send", "Send a file to someone else")
+    if session_details is not None:
+        table.add_row("read", "See files sent to you")
+        table.add_row("send", "Send a file to someone else")
+
     table.add_row("logout", "Sign out of this account")
     console.print(table)
 
@@ -139,7 +167,7 @@ while True:
 
     if choice == "read":
         try:
-            response = requests.get(f"{myurl}/messages?user={userid}")
+            response = requests.get(f"{myurl}/messages?user={userid}", headers={"Authorization": "Bearer " + session_jwt})
             messages = response.json()
             table = Table("ID", "Sender")
             for message in messages:
@@ -209,7 +237,13 @@ while True:
             encrypted_file.write(bytes(encrypted_file_content))
             encrypted_file.close()
             file = {'file': open(filename + ".tmp", 'rb')}
-            requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}", files=file)
+            fields = {
+                "recipient": recipient,
+                "shared_key": encrypted_key,
+                "sender_signature": s_signature,
+                "file": (filename + ".tmp", open(filename + ".tmp").read()),
+            }
+            requests.post(f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt})
             os.remove(filename + ".tmp")
             print("File sent!")
         except:
