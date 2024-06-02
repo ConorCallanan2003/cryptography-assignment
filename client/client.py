@@ -54,9 +54,11 @@ def createPublicPrivateKeys(username):
     return public_pem
 
 def getPublicKey(userid):
-    users = requests.get(f"{myurl}/users").json()
+    users_response_raw = http.request("GET", f"{myurl}/users", headers={"Authorization": "Bearer " + session_jwt})
+    users_response_decoded = users_response_raw.data.decode("utf-8")
+    users_json = json.loads(users_response_decoded)
     public_key = ""
-    for user in users:
+    for user in users_json:
         if user["id"] == userid:
             public_key_string = user["public_key"]
             break
@@ -90,9 +92,12 @@ def encryptAndSignFile(filename, file_content, shared_key, private_key):
     encryptor = cipher.encryptor()
     ct = encryptor.update(file_content) + encryptor.finalize()
     print("File encrypted!")
+    
+    file_content = nonce + ct
+
 
     file_signature = private_key.sign(
-        nonce + ct,
+        file_content,
         padding.PSS(
             mgf=padding.MGF1(hashes.SHA256()),
             salt_length=padding.PSS.MAX_LENGTH
@@ -102,10 +107,11 @@ def encryptAndSignFile(filename, file_content, shared_key, private_key):
 
     encrypted_file_name = filename + ".enc"
     with open(encrypted_file_name, "wb") as encrypted_file:
-        encrypted_file.write(nonce)
-        encrypted_file.write(ct)
+        encrypted_file.write(file_content)
+    
+    s_encoded_file_signature = base64.b64encode(file_signature)
 
-    return encrypted_file_name, file_signature
+    return encrypted_file_name, s_encoded_file_signature
 
 
 
@@ -130,12 +136,70 @@ def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
         ),
         hashes.SHA256()
     )
+    # Encoding
+    s_encoded_key_ciphertext = base64.b64encode(s_encrypted_key)
+    s_encoded_signature = base64.b64encode(s_signature)
+    
+    return s_encoded_key_ciphertext, s_encoded_signature
 
-    return s_encrypted_key, s_signature
+def verifyKeySignature(encoded_signed_key, encoded_signature, sender_public_key):
+    decoded_key = base64.b64decode(encoded_signed_key)
+    decoded_signature = base64.b64decode(encoded_signature)
+    try:
+        sender_public_key.verify(
+            decoded_signature,
+            decoded_key,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except:
+        return False
+    
+def verifyFileSignature(signature, signedFile, sender_public_key):
+    decoded_signature = base64.b64decode(signature)
+    try:
+        sender_public_key.verify(
+            decoded_signature,
+            signedFile,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except:
+        return False
+    
+    
+def decryptSignedKey(encryptedKey, receiver_private_key):
+    decoded_encrypted_key = base64.b64decode(encryptedKey)
+    # Decryption
+    decrypted_key = receiver_private_key.decrypt(
+        decoded_encrypted_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return decrypted_key
+
+def decryptFile(file_ciphertext, symmetric_key, nonce):
+    # AES CTR mode with symmetric key
+    cipher = Cipher(algorithms.AES(symmetric_key), modes.CTR(nonce))
+    decryptor = cipher.decryptor()
+    decrypted_plaintext = decryptor.update(file_ciphertext) + decryptor.finalize()
+    return decrypted_plaintext
 
 def checkIfUser():
     global username
     global userid
+    global password
     newUser = False
     if not os.path.isdir(f"./userdata/{username}"):
         print("User does not exist. \n")
@@ -153,9 +217,10 @@ def checkIfUser():
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
-        create_user_data = {"username": username, "password": password}
-        encoded_create_user_data = json.dumps(create_user_data).encode('utf-8')
-        create_user_response_raw = http.request("POST", f"{myurl}/create-user", body=encoded_create_user_data)
+        print(public_pem)
+        create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
+        print(create_user_data)
+        create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
         create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
         create_user_json = json.loads(create_user_response_decoded)
         userid = str(create_user_json["userid"])
@@ -165,7 +230,7 @@ def checkIfUser():
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
-    return userid
+        password = Prompt.ask("Enter your password: ")
 
 def signIn(username, password):
     global session_jwt
@@ -180,15 +245,13 @@ def signIn(username, password):
 
 checkIfUser()
 
-password = Prompt.ask("Enter your password: ")
-
 signIn(username, password)
 
 while True:
     if session_jwt == "":
         print("Invalid session token. Please try logging out and logging in again.")
-    
-    session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+    else:
+        session_details = jwt.decode(session_jwt, options={"verify_signature": False})
         
     table = Table("Option", "Description")
     if session_details is not None:
@@ -201,7 +264,8 @@ while True:
     choice = Prompt.ask("What would you like to do?")
 
     if choice == "read":
-        messages_response_raw = http.request("GET", f"{myurl}/messages?user={userid}", headers={"Authorization": "Bearer " + session_jwt})
+        # try:
+        messages_response_raw = http.request("GET", f"{myurl}/messages", headers={"Authorization": "Bearer " + session_jwt})
         messages_response_decoded = messages_response_raw.data.decode("utf-8")
         messages_json = json.loads(messages_response_decoded)
         table = Table("ID", "Sender")
@@ -212,7 +276,10 @@ while True:
         file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
         file_response_json = json.loads(file_response_raw.headers["file-metadata"])
         encrypted_shared_secret = file_response_json["shared_secret"]
-        nonce = file_response_json["nonce"]
+        sender_id = file_response_json["sender_id"]
+        shared_secret = file_response_json["shared_secret"]
+        sender_signature = file_response_json["sender_signature"]
+        file_signature = file_response_json["file_signature"]
         file_ciphertext = file_response_raw.data
         file_plaintext = ""
         sender_public_key = getPublicKey(sender_id)
@@ -223,79 +290,82 @@ while True:
                 backend=default_backend()
             )
             
-        isValidKeySignature = verifySignature(keySignature, signedkey, sender_public_key)
+        isValidKeySignature = verifyKeySignature(shared_secret, sender_signature, sender_public_key)
         if not isValidKeySignature:
             print("Warning: The key has been tampered with and is now invalid.\n")
             continue
         
-        decrypted_symmetric_key = decryptSignedKey(encryptedKey, private_key)
+        decrypted_symmetric_key = decryptSignedKey(shared_secret, private_key)
 
-        isValidFileSignature = verifySignature(fileSignature, signedFile, sender_public_key)
+        isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
         if not isValidFileSignature:
             print("Warning: The file has been tampered with and is now invalid.\n")
-            continue
+            # continue
         
         nonce = file_ciphertext[:16]
         extracted_ciphertext = file_ciphertext[16:]
         file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
 
         print("[bold]File Content:\n[/bold]")
-        print("\n")
         print(file_plaintext)
         print("\n")
         if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
             f = asksaveasfile(mode='wb')
             f.write(file_plaintext)
             f.close()
+        # except:
+        #     print("\nSomething went wrong...\n")
+        #     continue
 
     if choice == "send":
-        users = getAndPrintUsers()
-        option = Prompt.ask("Please choose the number of the receiving user (enter 'cancel' to cancel)")
-        if option == "cancel":
-            continue
-        recipient = users[int(option)-1]["id"]
-        recipient_public_key_string = users[int(option)-1]["public_key"]
-        recipient_public_key = serialization.load_pem_public_key(
-            recipient_public_key_string.encode("utf-8"),
-        )
-
-        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None,
-                backend=default_backend()
+        try:
+            users = getAndPrintUsers()
+            option = Prompt.ask("Please choose the number of the receiving user (enter 'cancel' to cancel)")
+            if option == "cancel":
+                continue
+            recipient = users[int(option)-1]["id"]
+            recipient_public_key_string = users[int(option)-1]["public_key"]
+            recipient_public_key = serialization.load_pem_public_key(
+                recipient_public_key_string.encode("utf-8"),
             )
 
-        symmetric_key = createSharedKey()
+            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,
+                    backend=default_backend()
+                )
 
-        encrypted_key, s_signature = encryptSignSharedKey(sender_random_key, recipient_public_key, private_key)
+            symmetric_key = createSharedKey()
+
+            encrypted_key, s_signature = encryptSignSharedKey(symmetric_key, recipient_public_key, private_key)
 
 
-        print("Please choose a file:")
-        filename = askopenfilename()
-        file = open(filename, 'rb')
-        file_content = file.read()
-        encrypted_file_name, file_signature = encryptAndSignFile(filename, file_content, sender_random_key, private_key)
+            print("Please choose a file:")
+            filename = askopenfilename()
+            file = open(filename, 'rb')
+            file_content = file.read()
+            encrypted_file_name, file_signature = encryptAndSignFile(filename, file_content, symmetric_key, private_key)
+            
+            fields = {
+                "recipient": recipient,
+                "shared_key": encrypted_key,
+                "sender_signature": s_signature,
+                "file_signature": file_signature,
+                "file": (encrypted_file_name, open(encrypted_file_name, "rb").read()),
+            }
+            
+            body, header = urllib3.encode_multipart_formdata(fields)
 
-        with open(encrypted_file_name, 'rb') as encrypted_file:
-            file = {'file': encrypted_file}
-            try:
-                requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}&file_signature={file_signature}", files=file)
-            except Exception as e:
-                print(e)
+            http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+            os.remove(encrypted_file_name)
+            print("File sent!")
+        except KeyboardInterrupt:
+            print("\nSomething went wrong...\n")
+            continue
 
-        encrypted_file = open(filename + ".tmp", "wb")
-        encrypted_file.write(bytes(file_content))
-        encrypted_file.close()
-        fields = {
-            "recipient": recipient,
-            "shared_key": encrypted_key,
-            "sender_signature": s_signature,
-            "file": (filename + ".tmp", open(filename + ".tmp").read()),
-        }
-        
-        body, header = urllib3.encode_multipart_formdata(fields)
-
-        http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
-        os.remove(filename + ".tmp")
-        print("File sent!")
+    if choice == "logout":
+        userid = ""
+        session_jwt = ""
+        username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
+        checkIfUser()

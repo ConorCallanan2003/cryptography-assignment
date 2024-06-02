@@ -21,15 +21,6 @@ class CreateUserModel(BaseModel):
     password: str
     public_key: str
 
-class MessageModel(BaseModel):
-    sender: int
-    recipient: int
-    file: int
-    shared_key : str
-    sender_signature: str
-    file_signature: str
-    
-
 class SignInDetails(BaseModel):
     username: str
     password: str
@@ -115,13 +106,13 @@ async def sign_in(sign_in_details: SignInDetails):
 
 
 @app.post("/send-file")
-async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
+async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], shared_key: Annotated[str, Form()], sender_signature: Annotated[str, Form()], file_signature: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
     session_details = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
     content = await file.read()
     newFile = File.create(content=content)
-    newMessage = Message.create(sender=session_details["user_id"], recipient=recipient, file=newFile.id, shared_key="shared_key")
+    newMessage = Message.create(sender=session_details["user_id"], recipient=recipient, file=newFile.id, shared_key=shared_key, sender_signature=sender_signature, file_signature=file_signature)
     newFile.save()
     newMessage.save()
     return Response(status_code=200, content=f"Success: File sent")
@@ -164,9 +155,10 @@ async def get_file(message_id: int, Authorization: Annotated[str, Header()]):
     if file is None or message is None:
         return Response(status_code=404, content="No such file")
     metadata = {
-        "nonce": "123",
         "shared_secret": message.shared_key,
-        "sender_signature": "signature"
+        "sender_signature": message.sender_signature,
+        "sender_id": message.sender.id,
+        "file_signature": message.file_signature
     }
     return Response(status_code=200, content=file.content, headers={"file-metadata": json.dumps(metadata)})
 
