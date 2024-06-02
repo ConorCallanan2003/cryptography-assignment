@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from sympy import content
 import typer
 from rich.prompt import Prompt
@@ -49,6 +50,19 @@ def createPublicPrivateKeys():
 
     return public_pem
 
+def getPublicKey(userid):
+    users = requests.get(f"{myurl}/users").json()
+    public_key = ""
+    for user in users:
+        if user["id"] == userid:
+            public_key_string = user["public_key"]
+            break
+
+    public_key = serialization.load_pem_public_key(
+        public_key_string.encode("utf-8"),
+    )
+    return public_key
+
 def getAndPrintUsers():
     users = requests.get(f"{myurl}/users").json()
     users = list(filter(lambda x: x["id"]!= int(userid), users))
@@ -90,6 +104,40 @@ def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
 
     return s_encrypted_key, s_signature
 
+def verifySignature(signature, signedItem, sender_public_key):
+    try:
+        sender_public_key.verify(
+            signature,
+            signedItem,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except:
+        return False
+
+def decryptSignedKey(encryptedKey, receiver_private_key):
+    # Decryption
+    decrypted_key = receiver_private_key.decrypt(
+        encryptedKey,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return decrypted_key
+
+def decryptFile(file_ciphertext, symmetric_key, nonce):
+    # AES CTR mode with symmetric key
+    cipher = Cipher(algorithms.AES(symmetric_key), modes.CTR(nonce))
+    decryptor = cipher.decryptor()
+    decrypted_plaintext = decryptor.update(file_ciphertext) + decryptor.finalize()
+    return decrypted_plaintext
+
 
 def checkIfUser(username):
     if username == "" or not os.path.isdir(f"./userdata/{username}"):
@@ -128,7 +176,18 @@ while True:
 
     choice = Prompt.ask("What would you like to do?")
 
-    if choice == "read":
+    if choice == "read":        
+        #to do:
+        #1. get encrypted file - Done
+        #2. get encryptedKey, signedEncryptedKey, signedEncryptedFile, sender id
+        #2. get sender public key - Done
+        #3. get receiver private key - Done
+        #4. verify signature of encrypted symmetric key with sender public key - Done
+        #5. decrypt the encrypted symmetric key with receiver private key - Done
+        #6. verify the signature of the file with sender public key - Done
+        #7. decrypt file with symmetric key - Done
+        #8. Save file - Done
+
         response = requests.get(f"{myurl}/messages?user={userid}")
         messages = response.json()
         table = Table("ID", "Sender")
@@ -139,99 +198,33 @@ while True:
         file_response = requests.get(f"{myurl}/file?message_id={chosen_id}")
         file_ciphertext = file_response.content
         file_plaintext = ""
-        
-        # checks if it has a shared key locally,
-        # if not checks if corresponding key is in key table, if so, decrypts it from key table and saves it locally, 
-        # else uses private key to decrypt file
+        # extract encrypted key, key signature, file signature, sender id
 
-        shared_key_exists = False
-        sender_name = ""
-        sender_id = -1
-        for message in messages:
-            if message["id"] == chosen_id:
-                sender_name = message["sender"]
-                break
-        users = requests.get(f"{myurl}/users").json()
-        for user in users:
-            if user["username"] == sender_name:
-                sender_id = user["id"]
-                break
-            else:
-                print("Error 404: User not found")
+        sender_public_key = getPublicKey(sender_id)
 
-        if os.path.isfile(f"./userdata/{username}/{sender_name}_shared_key.pem"):
-            with open(f"./userdata/{username}/{sender_name}_shared_key.pem", 'r') as shared_key_file:
-                shared_key = shared_key_file.read()
-            shared_key_exists = True
-            
-        else:
-            key_response = requests.get(f"{myurl}/get-shared-key", params={
-                "sender": sender_id,
-                "recipient": userid
-            })
-            encrypted_key = None
-            if key_response.status_code == 200:
-                encrypted_key = key_response.json()["shared_key"]
-                shared_key_exists = True
-
-            if encrypted_key is not None:
-                # shared_key = Decrypt(Validate(EncryptedKey2, PublicKey1), SecretKey2)
-                sender_public_key_string = users["sender_id"]["public_key"]
-                sender_public_key = serialization.load_pem_public_key(
-                    sender_public_key_string.encode("utf-8"),
-                )
-                decrypt_signed_key = sender_public_key.decrypt(
-                    encrypted_key,
-                    padding.OAEP(
-                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                        algorithm=hashes.SHA256(),
-                        label=None
-                    )
-                )
-
-                with open(f"./userdata/{username}/private_key.pem", "rb") as private_key_file:
-                    private_key = serialization.load_pem_private_key(
-                        private_key_file.read(),
-                        password=None,
-                    )
-                    shared_key_plaintext = private_key.decrypt(
-                        decrypt_signed_key,
-                        padding.OAEP(
-                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                            algorithm=hashes.SHA256(),
-                            label=None
-                        )
-                    )
-                # need the key serialised as bytes?
-                f_shared_key = open(f"./userdata/{username}/{sender_name}_shared_key.pem", "x")
-                f_shared_key.write(shared_key_plaintext)
-                f_shared_key.close()
-                shared_key = shared_key_plaintext
-
-        if shared_key_exists:
-            file_plaintext = private_key.decrypt(
-                file_ciphertext,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
-                )
+        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend()
             )
+        
+        isValidKeySignature = verifySignature(keySignature, signedkey, sender_public_key)
+        if not isValidKeySignature:
+            print("Warning: The key has been tampered with and is now invalid.\n")
+            continue
+        
+        decrypted_symmetric_key = decryptSignedKey(encryptedKey, private_key)
 
-        else:
-            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-                private_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=None,
-                )
-                file_plaintext = private_key.decrypt(
-                    file_ciphertext,
-                    padding.OAEP(
-                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                        algorithm=hashes.SHA256(),
-                        label=None
-                    )
-                )
+        isValidFileSignature = verifySignature(fileSignature, signedFile, sender_public_key)
+        if not isValidFileSignature:
+            print("Warning: The file has been tampered with and is now invalid.\n")
+            continue
+        
+        nonce = file_ciphertext[:16]
+        extracted_ciphertext = file_ciphertext[16:]
+        file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
+
         print("[bold]File Content:\n[/bold]")
         print("\n")
         print(file_plaintext)
