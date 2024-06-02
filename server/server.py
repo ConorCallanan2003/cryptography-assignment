@@ -18,7 +18,8 @@ class MessageModel(BaseModel):
     recipient: int
     file: int
     shared_key : str
-
+    sender_signature: str
+    file_signature: str
 
 @app.post("/add-user")
 async def create_user(user: UserModel):

@@ -158,6 +158,6 @@ dmypy.json
 cython_debug/
 
 server/database.db
-client/venv
-server/venv
+client/venv*
+server/venv*
 client/userdata

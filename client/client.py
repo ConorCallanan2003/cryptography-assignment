@@ -126,16 +126,33 @@ def encryptSignSharedKey(sharedKey, r_public_key, s_private_key):
     )
 
     # Encoding
-    s_encoded_key_ciphertext = base64.b64encode(s_encrypted_key).decode('utf-8')
-    s_encoded_signature = base64.b64encode(s_signature).decode('utf-8')
+    s_encoded_key_ciphertext = base64.b64encode(s_encrypted_key)
+    s_encoded_signature = base64.b64encode(s_signature)
 
     return s_encoded_key_ciphertext, s_encoded_signature
 
-def verifySignature(signature, signedItem, sender_public_key):
+def verifyKeySignature(encoded_signed_key, encoded_signature, sender_public_key):
+    decoded_key = base64.b64decode(encoded_signed_key)
+    decoded_signature = base64.b64decode(encoded_signature) 
+    try:
+        sender_public_key.verify(
+            decoded_signature,
+            decoded_key,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except:
+        return False
+    
+def verifyFileSignature(signature, signedFile, sender_public_key):
     try:
         sender_public_key.verify(
             signature,
-            signedItem,
+            signedFile,
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()),
                 salt_length=padding.PSS.MAX_LENGTH
