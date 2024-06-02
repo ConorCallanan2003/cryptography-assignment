@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
-from sympy import content
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import typer
 from rich.prompt import Prompt
 from rich.prompt import Confirm
@@ -60,9 +60,33 @@ def getAndPrintUsers():
 
 
 def createSharedKey():
-    sender_random_key = secrets.token_bytes(16)
+    sender_random_key = secrets.token_bytes(32)
 
     return sender_random_key
+
+def encryptAndSignFile(filename, file_content, shared_key, private_key):
+    # Encrypt the file using AES - CTR
+    nonce = secrets.token_bytes(16) # same length as the block size
+    cipher = Cipher(algorithms.AES(shared_key), modes.CTR(nonce), backend=default_backend())
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(file_content) + encryptor.finalize()
+    print("File encrypted!")
+
+    file_signature = private_key.sign(
+        nonce + ct,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+
+    encrypted_file_name = filename + ".enc"
+    with open(encrypted_file_name, "wb") as encrypted_file:
+        encrypted_file.write(nonce)
+        encrypted_file.write(ct)
+
+    return encrypted_file_name, file_signature
 
 
 
@@ -188,16 +212,20 @@ while True:
 
         encrypted_key, s_signature = encryptSignSharedKey(sender_random_key, recipient_public_key, private_key)
 
-
+        # Encrypt the file using AES - CTR
         print("Please choose a file:")
         filename = askopenfilename()
         file = open(filename, 'rb')
         file_content = file.read()
+        encrypted_file_name, file_signature = encryptAndSignFile(filename, file_content, sender_random_key, private_key)
 
-        encrypted_file = open(filename + ".tmp", "wb")
-        encrypted_file.write(bytes(file_content))
+        with open(encrypted_file_name, 'rb') as encrypted_file:
+            file = file_to_send = {'file': encrypted_file}
+            try:
+                requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}&file_signature={file_signature}", files=file)
+            except Exception as e:
+                print(e)
+
         encrypted_file.close()
-        file = {'file': open(filename + ".tmp", 'rb')}
-        requests.post(f"{myurl}/send-file?sender={userid}&recipient={recipient}&shared_key={encrypted_key}&sender_signature={s_signature}", files=file)
-        os.remove(filename + ".tmp")
+        os.remove(encrypted_file_name)
         print("File sent!")
