@@ -28,6 +28,8 @@ class Message(Model):
     recipient = ForeignKeyField(User, backref="messages_received")
     file = ForeignKeyField(File, backref="message")
     shared_key = CharField()
+    sender_signature = CharField()
+    file_signature = CharField()
 
     class Meta:
         database = db

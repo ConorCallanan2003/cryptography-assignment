@@ -26,6 +26,9 @@ class MessageModel(BaseModel):
     recipient: int
     file: int
     shared_key : str
+    sender_signature: str
+    file_signature: str
+    
 
 class SignInDetails(BaseModel):
     username: str
