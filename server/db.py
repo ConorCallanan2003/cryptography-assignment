@@ -21,6 +21,7 @@ class Message(Model):
     file = ForeignKeyField(File, backref="message")
     shared_key = CharField()
     sender_signature = CharField()
+    file_signature = CharField()
 
     class Meta:
         database = db
