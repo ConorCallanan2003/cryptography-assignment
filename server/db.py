@@ -3,8 +3,16 @@ from peewee import BlobField, CharField, ForeignKeyField, Model, SqliteDatabase,
 db = SqliteDatabase('database.db')
 
 class User(Model):
-    username = CharField()
+    username = CharField(unique=True)
     public_key = TextField()
+
+    class Meta:
+        database = db
+        
+class Password(Model):
+    user = ForeignKeyField(User, backref="hashed_pw")
+    hashed_pw = CharField()
+    salt = CharField()
 
     class Meta:
         database = db
@@ -29,4 +37,4 @@ class Message(Model):
 
 db.connect()
 
-db.create_tables([User, File, Message])
+db.create_tables([User, File, Message, Password])
