@@ -1,6 +1,7 @@
-import requests
 import os
 import jwt
+import urllib3
+import json
 from tkinter.filedialog import askopenfilename
 from tkinter.filedialog import asksaveasfile
 from cryptography.hazmat.primitives import serialization
@@ -20,6 +21,7 @@ import secrets
 
 console = Console()
 
+http = urllib3.PoolManager()
 
 app = typer.Typer()
 
@@ -53,8 +55,10 @@ def createPublicPrivateKeys():
 
 
 def getAndPrintUsers():
-    users = requests.get(f"{myurl}/users", headers={"Authorization": "Bearer " + session_jwt}).json()
-    users = list(filter(lambda x: x["id"]!= int(userid), users))
+    users_response_raw = http.request("GET", f"{myurl}/users", headers={"Authorization": "Bearer " + session_jwt})
+    users_response_decoded = users_response_raw.data.decode("utf-8")
+    users_json = json.loads(users_response_decoded)
+    users = list(filter(lambda x: x["id"]!= int(userid), users_json))
     table = Table("No. ", "Username", "UserID")
     for index, user in enumerate(users):
         table.add_row(str(index+1), str(user["username"]), str(user["id"]))
@@ -122,12 +126,12 @@ def checkIfUser():
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
-        response = requests.post(f"{myurl}/create-user", json={
-            "username": username,
-            "public_key": public_pem.decode(),
-            "password": password
-        })
-        userid = str(response.json()["userid"])
+        create_user_data = {"username": username, "password": password}
+        encoded_create_user_data = json.dumps(create_user_data).encode('utf-8')
+        create_user_response_raw = http.request("POST", f"{myurl}/create-user", body=encoded_create_user_data)
+        create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
+        create_user_json = json.loads(create_user_response_decoded)
+        userid = str(create_user_json["userid"])
         userid_file = open(f"./userdata/{username}/userid.txt", "w")
         userid_file.write(userid)
         print("[bold blue]New user has been created![/bold blue]")
@@ -137,11 +141,14 @@ def checkIfUser():
 
 def signIn(username, password):
     global session_jwt
-    response = requests.post(f"{myurl}/sign-in", json={"username": username, "password": password})
-    if response.status_code != 200:
+    sign_in_data = {"username": username, "password": password}
+    encoded_sign_in_data = json.dumps(sign_in_data).encode('utf-8')
+    sign_in_response_raw = http.request("POST", f"{myurl}/sign-in", body=encoded_sign_in_data)
+    sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
+    sign_in_response_json = json.loads(sign_in_response_decoded)
+    if sign_in_response_raw.status != 200:
         print("\n[bold red]Error signing in...[/bold red]\n")
-    session_jwt = response.json()["jwt"]
-    print(session_jwt)
+    session_jwt = sign_in_response_json["jwt"]
 
 checkIfUser()
 
@@ -167,17 +174,19 @@ while True:
 
     if choice == "read":
         try:
-            response = requests.get(f"{myurl}/messages?user={userid}", headers={"Authorization": "Bearer " + session_jwt})
-            messages = response.json()
+            messages_response_raw = http.request("GET", f"{myurl}/messages?user={userid}", headers={"Authorization": "Bearer " + session_jwt})
+            messages_response_decoded = messages_response_raw.data.decode("utf-8")
+            messages_json = json.loads(messages_response_decoded)
             table = Table("ID", "Sender")
-            for message in messages:
+            for message in messages_json:
                 table.add_row(str(message["id"]), str(message["sender"]))
             console.print(table)
             chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
-            file_response = requests.get(f"{myurl}/file?message_id={chosen_id}")
-            encrypted_shared_secret = file_response.json()["shared_secret"]
-            nonce = file_response.json()["nonce"]
-            file_ciphertext = file_response.content
+            file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
+            file_response_json = json.loads(file_response_raw.headers["file-metadata"])
+            encrypted_shared_secret = file_response_json["shared_secret"]
+            nonce = file_response_json["nonce"]
+            file_ciphertext = file_response_raw.data
             file_plaintext = ""
             with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
                 private_key = serialization.load_pem_private_key(
@@ -236,21 +245,24 @@ while True:
             nonce, encrypted_file_content = encryptSymmetric(symmetric_key, file_content)
             encrypted_file.write(bytes(encrypted_file_content))
             encrypted_file.close()
-            file = {'file': open(filename + ".tmp", 'rb')}
             fields = {
                 "recipient": recipient,
                 "shared_key": encrypted_key,
                 "sender_signature": s_signature,
                 "file": (filename + ".tmp", open(filename + ".tmp").read()),
             }
-            requests.post(f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt})
+            
+            body, header = urllib3.encode_multipart_formdata(fields)
+
+            http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
             os.remove(filename + ".tmp")
             print("File sent!")
-        except:
+        except KeyboardInterrupt:
             print("\nSomething went wrong...\n")
             continue
 
     if choice == "logout":
         userid = ""
+        session_jwt = ""
         username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
         checkIfUser()

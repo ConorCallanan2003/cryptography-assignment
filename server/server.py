@@ -1,6 +1,7 @@
 import json
 import time
 import os
+import urllib3
 from datetime import datetime
 from typing import Annotated
 import jwt
@@ -36,7 +37,8 @@ class AuthenticatedRequest(BaseModel):
 class SendFileRequest(AuthenticatedRequest):
     recipient: int
     
-def authenticate_jwt(auth_token):
+def authenticate_jwt(authorization):
+    auth_token = authorization.replace("Bearer ", "")
     try:
         session_details = jwt.decode(auth_token, jwt_secret, algorithms="HS256")
     except:
@@ -78,12 +80,14 @@ async def sign_in(sign_in_details: SignInDetails):
         if (end - start < 0.5):
             time.sleep(0.5 - (end - start))
         return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+    
     user_password = Password.get_or_none(Password.user == user.id)
     if user_password is None:
         end = time.time()
         if (end - start < 0.5):
             time.sleep(0.5 - (end - start))
         return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+    
     kdf = Scrypt(
         salt=base64.b64decode(user_password.salt),
         length=32,
@@ -91,6 +95,7 @@ async def sign_in(sign_in_details: SignInDetails):
         r=8,
         p=1,
     )
+    
     try:
         kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
     except:
@@ -108,8 +113,7 @@ async def sign_in(sign_in_details: SignInDetails):
 
 @app.post("/send-file")
 async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
-    auth_token = Authorization.replace("Bearer ", "")
-    session_details = authenticate_jwt(auth_token)
+    session_details = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
     content = await file.read()
@@ -121,12 +125,14 @@ async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Ann
 
 @app.get("/users")
 async def get_users(Authorization: Annotated[str, Header()]):
-    auth_token = Authorization.replace("Bearer ", "")
-    session_details = authenticate_jwt(auth_token)
+    session_details = authenticate_jwt(Authorization)
+    
     if (isinstance(session_details, Response)):
         return session_details
+
     response_content = []
     users = User.select()
+
     for user in users:
         response_content.append(model_to_dict(user))
 
@@ -134,8 +140,7 @@ async def get_users(Authorization: Annotated[str, Header()]):
 
 @app.get("/messages")
 async def get_messages(Authorization: Annotated[str, Header()]):
-    auth_token = Authorization.replace("Bearer ", "")
-    session_details = authenticate_jwt(auth_token)
+    session_details = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
     user =  session_details["user_id"]
@@ -148,14 +153,19 @@ async def get_messages(Authorization: Annotated[str, Header()]):
 
 @app.get("/file")
 async def get_file(message_id: int, Authorization: Annotated[str, Header()]):
-    auth_token = Authorization.replace("Bearer ", "")
-    session_details = authenticate_jwt(auth_token)
+    session_details = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
-    file = File.select().where(File.id == message_id)
-    if len(file)!= 1:
+    message = Message.get_or_none(Message.id == message_id)
+    file = File.get_or_none(File.id == message_id)
+    if file is None or message is None:
         return Response(status_code=404, content="No such file")
-    return Response(status_code=200, content=file[0].content)
+    metadata = {
+        "nonce": "123",
+        "shared_secret": message.shared_key,
+        "sender_signature": "signature"
+    }
+    return Response(status_code=200, content=file.content, headers={"file-metadata": json.dumps(metadata)})
 
 @app.get("/test")
 async def test():
