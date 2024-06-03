@@ -142,7 +142,7 @@ async def verify(Authorization: Annotated[str, Header()], answer: Annotated[str,
 async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
     start = time.time()
     
-    session_details, _ = authenticate_jwt(Authorization)
+    session_details, request_jwt = authenticate_jwt(Authorization)
     
     if "verified" not in session_details or session_details["verified"] is False:
         return Response(status_code=423, content=json.dumps({"status": "error", "message": "Unverified token. Please complete captcha"}))
@@ -179,6 +179,7 @@ async def sign_in(username: Annotated[str, Form()], password: Annotated[str, For
         failed_attempts = session_details["failed_attempts"]
         failed_attempts += 1
         token = jwt.encode({"verified": True, "user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+        revoke_jwt(request_jwt)
         return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
 
     session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(), "exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
@@ -193,7 +194,10 @@ async def sign_in(username: Annotated[str, Form()], password: Annotated[str, For
 
 @app.post("/send-file")
 async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], shared_key: Annotated[str, Form()], sender_signature: Annotated[str, Form()], file_signature: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
-    session_details, _ = authenticate_jwt(Authorization)
+    session_details, request_jwt = authenticate_jwt(Authorization)
+    revoke_jwt(request_jwt)
+    session_details["iat"] = time.time()
+    session_details["exp"] = time.time() + 1800
     if (isinstance(session_details, Response)):
         return session_details
     content = await file.read()
@@ -201,7 +205,8 @@ async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Ann
     newMessage = Message.create(sender=session_details["user_id"], recipient=recipient, file=newFile.id, shared_key=shared_key, sender_signature=sender_signature, file_signature=file_signature)
     newFile.save()
     newMessage.save()
-    return Response(status_code=200, content=f"Success: File sent")
+    new_jwt = jwt.encode(session_details, jwt_secret, algorithm="HS256")
+    return Response(status_code=200, content=json.dumps({"status": "success", "message": "File sent", "jwt": new_jwt}))
 
 @app.get("/users")
 async def get_users(Authorization: Annotated[str, Header()]):
