@@ -31,6 +31,7 @@ userid = ""
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
 session_jwt = ""
+login_jwt = ""
 
 def createPublicPrivateKeys(username):
     private_key = rsa.generate_private_key(
@@ -234,24 +235,56 @@ def checkIfUser():
 
 def signIn(username, password):
     global session_jwt
-    sign_in_data = {"username": username, "password": password}
-    encoded_sign_in_data = json.dumps(sign_in_data).encode('utf-8')
-    sign_in_response_raw = http.request("POST", f"{myurl}/sign-in", body=encoded_sign_in_data)
+    global login_jwt
+   
+    print(f"Sending login information with JWT {login_jwt}")
+    fields = {
+        "username": username,
+        "password": password
+    }
+    body, header = urllib3.encode_multipart_formdata(fields)
+    sign_in_response_raw = http.request(
+        "POST", 
+        f"{myurl}/sign-in",
+        headers={"Authorization": f"Bearer {login_jwt}", "Content-Type": header},
+        body=body
+    )
     sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
     sign_in_response_json = json.loads(sign_in_response_decoded)
+    print(f"Sign in response json: {sign_in_response_json}")
     if sign_in_response_raw.status != 200:
         print("\n[bold red]Error signing in...[/bold red]\n")
-    session_jwt = sign_in_response_json["jwt"]
+        login_jwt = sign_in_response_json["jwt_login"]
+    try:
+        session_jwt = sign_in_response_json["jwt"]
+        
+    except KeyError:
+        print("didn't receive session jwt")
+        session_jwt = None
+    print(f"Session JWT: {session_jwt}")
+    # print(f"length of sesssion jwt: {len(session_jwt)}")
+    print(f"Login JWT: {login_jwt}")
+
 
 checkIfUser()
 
 signIn(username, password)
 
 while True:
-    if session_jwt == "":
+    while session_jwt == None:
         print("Invalid session token. Please try logging out and logging in again.")
-    else:
-        session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+        checkIfUser()
+        signIn(username, password)
+    if session_jwt is not None:
+        print(f"Session JWT: {session_jwt}")
+        try:
+            session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+        except jwt.InvalidTokenError:
+            print("\n[bold red]Invalid session token. Please sign in again.[/bold red]\n")
+            signIn(username, password)
+            continue
+            
+
         
     table = Table("Option", "Description")
     if session_details is not None:

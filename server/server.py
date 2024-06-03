@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 jwt_secret = os.urandom(32)
+MAX_FAILED_ATTEMPTS = 3
 
 app = FastAPI()
 
@@ -24,6 +25,7 @@ class CreateUserModel(BaseModel):
 class SignInDetails(BaseModel):
     username: str
     password: str
+    # login_jwt: str
 
 class AuthenticatedRequest(BaseModel):
     jwt: str
@@ -43,6 +45,9 @@ def authenticate_jwt(authorization):
         return Response(status_code=401, content=f"Error: Authentication token expired")
     print(session_details)
     return session_details
+
+def create_jwt_login_attempts(user_id: int, failed_attempts: int ):
+    return jwt.encode({"user_id": user_id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
 
 @app.post("/create-user")
 async def create_user(user: CreateUserModel):
@@ -64,45 +69,82 @@ async def create_user(user: CreateUserModel):
     newPassword = Password.create(user=newUser.id, hashed_pw=base64.b64encode(digest), salt=base64.b64encode(salt))
     newPassword.save()
     return Response(status_code=200, content=json.dumps({"status": "Success", "message": "New user has been created!", "userid": newUser.id}))
-
+    
 @app.post("/sign-in")
-async def sign_in(sign_in_details: SignInDetails):
+async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], authorization: Annotated[str, Header()]):
     start = time.time()
-    user = User.get_or_none(User.username == sign_in_details.username)
-    if user == None:
-        end = time.time()
-        if (end - start < 0.5):
-            time.sleep(0.5 - (end - start))
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
-    
-    user_password = Password.get_or_none(Password.user == user.id)
-    if user_password is None:
-        end = time.time()
-        if (end - start < 0.5):
-            time.sleep(0.5 - (end - start))
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
-    
-    kdf = Scrypt(
-        salt=base64.b64decode(user_password.salt),
-        length=32,
-        n=2**14,
-        r=8,
-        p=1,
-    )
-    
     try:
-        kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
-    except:
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        user = User.get_or_none(User.username == username)
+        if user is None:
+            end = time.time()
+            if end - start < 0.5:
+                time.sleep(0.5 - (end - start))
+            return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        
+        user_password = Password.get_or_none(Password.user == user.id)
+        if user_password is None:
+            end = time.time()
+            if end - start < 0.5:
+                time.sleep(0.5 - (end - start))
+            return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        
+        kdf = Scrypt(
+            salt=base64.b64decode(user_password.salt),
+            length=32,
+            n=2**14,
+            r=8,
+            p=1,
+        )
 
-    session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
+        login_jwt = None
+        if authorization.startswith("Bearer ") and len(authorization) > 7 and authorization[7] != " ":
+            login_jwt = authorization[len("Bearer "):]
+            try:
+                session_details = jwt.decode(login_jwt, jwt_secret, algorithms="HS256")
+                print(session_details)
+            except jwt.ExpiredSignatureError:
+                return Response(status_code=401, content=f"Error: Token has expired")
+            except jwt.InvalidTokenError:
+                return Response(status_code=401, content=f"Error: Invalid authentication token")
+        else:
+            print("No JWT provided")
+            login_jwt = None
+        
 
-    end = time.time()
+        try:
+            kdf.verify(password.encode(), base64.b64decode(user_password.hashed_pw))
+            print("Password verified")
+        except:
+            print("Password verification failed")
+            if login_jwt is not None:
+                failed_attempts = jwt.decode(login_jwt, jwt_secret, algorithms="HS256")["failed_attempts"]
+            else:
+                print("Creating new token, setting failed attempts to 1")
+                failed_attempts = 0
 
-    if (end - start < 0.5):
-        time.sleep(0.5 - (end - start))
+            failed_attempts += 1
+            token = create_jwt_login_attempts(user.id, failed_attempts)
 
-    return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
+            if failed_attempts >= MAX_FAILED_ATTEMPTS:
+                # Block user for a period of time
+
+                return Response(status_code=500, content=json.dumps({"status": "error", "message": "Too many failed login attempts", "jwt_login": token}))
+            else:
+                print("creating token and sending it")
+                print(f"JWT: {token}")
+                return Response(status_code=404, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt_login": token}))
+
+        session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(), "exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
+        end = time.time()
+
+        if end - start < 0.5:
+            time.sleep(0.5 - (end - start))
+
+        return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
+    except Exception as e:
+        print(f"Exception occurred: {e}")
+        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Internal Server Error"}))
+
 
 
 @app.post("/send-file")
