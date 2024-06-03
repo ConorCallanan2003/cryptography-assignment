@@ -18,6 +18,7 @@ import base64
 from rich.console import Console
 from rich.table import Table
 import secrets
+import re
 
 console = Console()
 
@@ -201,12 +202,15 @@ def checkIfUser():
     global userid
     global password
     newUser = False
+    pattern = r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"
     if not os.path.isdir(f"./userdata/{username}"):
         print("User does not exist. \n")
         newUser = True
     if username == "" or newUser:
         username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-        password = Prompt.ask("[bold red]Enter your new password![/bold red]")
+        password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
+        while not re.match(pattern, password):
+            password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
         if not os.path.isdir(f"./userdata"):
             os.mkdir("./userdata")
         os.mkdir(f"./userdata/{username}")
