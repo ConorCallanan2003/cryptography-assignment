@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 import secrets
 import re
+import pwinput
 
 console = Console()
 
@@ -207,9 +208,9 @@ def checkIfUser():
         signed_up = False
         while not signed_up:
             username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-            password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
+            password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
             while not re.match(pattern, password):
-                password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
+                password = pwinput.pwinput("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]", mask='*')
         
             public_pem, private_pem = createPublicPrivateKeys(username)
             
@@ -245,7 +246,7 @@ def checkIfUser():
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
-        password = Prompt.ask("Enter your password: ")
+        password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
         
 
 def signIn(username):
@@ -273,7 +274,7 @@ def signIn(username):
 
         if sign_in_response_raw.status == 401:
             print("\n[bold red]Error signing in...[/bold red]\n")
-            password = Prompt.ask("Enter your password: ")
+            password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
             
         elif sign_in_response_raw.status == 423:
             print("\n[bold red]Too many attempts...[/bold red]\n")
@@ -350,8 +351,10 @@ while True:
                 for message in messages_json:
                     table.add_row(str(message["id"]), str(message["sender"]))
                 console.print(table)
-                chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
-                file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
+                chosen_id = Prompt.ask("Which file would you like to read? (Enter ID)")
+                if chosen_id == "cancel":
+                    continue
+                file_response_raw = http.request("GET", f"{myurl}/file?message_id={int(chosen_id)}", headers={"Authorization": "Bearer " + session_jwt})
                 file_response_json = json.loads(file_response_raw.headers["file-metadata"])
                 encrypted_shared_secret = file_response_json["shared_secret"]
                 sender_id = file_response_json["sender_id"]
