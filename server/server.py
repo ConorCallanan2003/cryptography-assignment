@@ -11,6 +11,7 @@ from fastapi import FastAPI, Form, HTTPException, Header, Response, UploadFile
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+import re
 
 jwt_secret = os.urandom(32)
 MAX_FAILED_ATTEMPTS = 3
@@ -38,6 +39,9 @@ def authenticate_jwt(authorization):
         session_details = jwt.decode(auth_token, jwt_secret, algorithms="HS256")
     except:
         return Response(status_code=401, content=f"Error: Invalid authentication token")
+    isBlockedJWT = BlockedJWTs.get_or_none(BlockedJWTs.jwt == auth_token)
+    if isBlockedJWT is not None:
+        return Response(status_code=401, content=f"Error: Authentication token blocked")
     exp =  session_details["exp"]
     exp_dt = datetime.fromtimestamp(exp/1000.0)
     if (exp_dt > datetime.now()):
@@ -45,14 +49,20 @@ def authenticate_jwt(authorization):
     print(session_details)
     return session_details, auth_token
 
+def revoke_jwt(jwt):
+    blockedJWT = BlockedJWTs.create(jwt=jwt)
+    blockedJWT.save()
+
 @app.post("/create-user")
 async def create_user(user: CreateUserModel):
-    # Add regex password validation
+    pattern = r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"
+    if not re.match(pattern, user.password):
+        return Response(status_code=422, content=json.dumps({"status": "error", "message": "Insufficient password"}))
     try:
         newUser = User.create(username = user.username, public_key = user.public_key)
         newUser.save()
     except:
-        raise HTTPException(status_code=500, detail="Username already exists")
+        raise HTTPException(status_code=403, detail="Username already exists")
     salt = os.urandom(16)
     kdf = Scrypt(
         salt=salt,

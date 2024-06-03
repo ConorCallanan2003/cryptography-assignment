@@ -34,7 +34,13 @@ class Message(Model):
     class Meta:
         database = db
 
+class BlockedJWTs(Model):
+    jwt = CharField(index=True)
+
+    class Meta:
+        database = db
+
 
 db.connect()
 
-db.create_tables([User, File, Message, Password])
+db.create_tables([User, File, Message, Password, BlockedJWTs])
