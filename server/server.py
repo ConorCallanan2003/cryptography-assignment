@@ -1,6 +1,5 @@
 import json
 import time
-import os
 import secrets
 import requests
 from art import *

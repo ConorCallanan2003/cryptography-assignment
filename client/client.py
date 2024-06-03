@@ -2,6 +2,11 @@ import os
 import jwt
 import urllib3
 import json
+import base64
+import typer
+import secrets
+import re
+import pwinput
 from tkinter.filedialog import askopenfilename
 from tkinter.filedialog import asksaveasfile
 from cryptography.hazmat.primitives import serialization
@@ -10,16 +15,11 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-import typer
 from rich.prompt import Prompt
 from rich.prompt import Confirm
 from rich import print
-import base64
 from rich.console import Console
 from rich.table import Table
-import secrets
-import re
-import pwinput
 
 console = Console()
 
