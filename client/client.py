@@ -43,15 +43,13 @@ def createPublicPrivateKeys(username):
         format=serialization.PrivateFormat.TraditionalOpenSSL,
         encryption_algorithm=serialization.NoEncryption()
     )
-    f_private = open(f"./userdata/{username}/private_key.pem", "wb")
-    f_private.write(private_pem)
     public_key = private_key.public_key()
     public_pem = public_key.public_bytes(
        encoding=serialization.Encoding.PEM,
        format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
-    return public_pem
+    return public_pem, private_pem
 
 def getPublicKey(userid):
     users_response_raw = http.request("GET", f"{myurl}/users", headers={"Authorization": "Bearer " + session_jwt})
@@ -212,23 +210,27 @@ def checkIfUser():
             password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
             while not re.match(pattern, password):
                 password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
-            if not os.path.isdir(f"./userdata"):
-                os.mkdir("./userdata")
-            os.mkdir(f"./userdata/{username}")
         
-            public_pem = createPublicPrivateKeys(username)
+            public_pem, private_pem = createPublicPrivateKeys(username)
             
             create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
-            create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
+            create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Authorization": f"Bearer {session_jwt}", "Content-Type": "application/json"})
             if create_user_response_raw.status == 423:
                 print("[bold red]Username already taken![/bold red]\n")
-                os.remove(f"./userdata/{username}/private_key.pem")
-                os.rmdir(f"./userdata/{username}")
                 continue
             else:
                 signed_up = True
             create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
             create_user_json = json.loads(create_user_response_decoded)
+            
+            if not os.path.isdir(f"./userdata"):
+                os.mkdir("./userdata")
+                
+            if not os.path.isdir(f"./userdata/{username}"):
+                os.mkdir(f"./userdata/{username}")
+            
+            f_private = open(f"./userdata/{username}/private_key.pem", "wb")
+            f_private.write(private_pem)
             
             f_public = open(f"./userdata/{username}/public_key.pem", "wb")
             f_public.write(public_pem)
@@ -266,7 +268,6 @@ def signIn(username):
         )
         sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
         sign_in_response_json = json.loads(sign_in_response_decoded)
-        print(sign_in_response_json)
 
         session_jwt = sign_in_response_json["jwt"]
 
@@ -283,157 +284,165 @@ def signIn(username):
             print("\n[bold green]Signed in successfully![/bold green]\n")
             return True
 
-captcha_response = http.request("GET", f"{myurl}/captcha")
-captcha_response_json = json.loads(captcha_response.data.decode("utf-8"))
-session_jwt = captcha_response_json["jwt"]
-question = captcha_response_json["question"]
+def robot_check():
+    global session_jwt
+    
+    captcha_response = http.request("GET", f"{myurl}/captcha")
+    captcha_response_json = json.loads(captcha_response.data.decode("utf-8"))
+    session_jwt = captcha_response_json["jwt"]
+    question = captcha_response_json["question"]
 
-answer = Prompt.ask(f"\n{question}\n[bold]Please answer this question to prove you are human! (lowercase only) [/bold]\nAnswer")
+    answer = Prompt.ask(f"\n{question}\n[bold]Please answer this question to prove you are human! (lowercase only) [/bold]\nAnswer")
 
-fields = {
-    "answer": answer
-}
-            
-body, header = urllib3.encode_multipart_formdata(fields)
+    fields = {
+        "answer": answer
+    }
+                
+    body, header = urllib3.encode_multipart_formdata(fields)
 
-verify_response = http.request("POST", f"{myurl}/verify", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
-if verify_response.status != 200:
-    print("\n[bold red]Error verifying... Try again. [/bold red]\n")
-    exit()
-verify_response_json = json.loads(verify_response.data.decode("utf-8"))
-
-username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
-
-checkIfUser()
-
-signed_in = signIn(username)
-
-if not signed_in:
-    print("Exiting...")
-    exit()
+    verify_response = http.request("POST", f"{myurl}/verify", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+    if verify_response.status != 200:
+        print("\n[bold red]Error verifying... Try again. [/bold red]\n")
+        exit()
+    verify_response_json = json.loads(verify_response.data.decode("utf-8"))
+    
+    session_jwt = verify_response_json["jwt"]
 
 while True:
-    if session_jwt is not None:
-        try:
-            session_details = jwt.decode(session_jwt, options={"verify_signature": False})
-        except jwt.InvalidTokenError:
-            print("\n[bold red]Invalid session token. Please sign in again.[/bold red]\n")
-            signIn(username)
-            continue
-            
-    table = Table("Option", "Description")
-    if session_details is not None:
-        table.add_row("read", "See files sent to you")
-        table.add_row("send", "Send a file to someone else")
+    
+    robot_check()
 
-    table.add_row("logout", "Sign out of this account")
-    console.print(table)
+    username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
-    choice = Prompt.ask("What would you like to do?")
+    checkIfUser()
 
-    if choice == "read":
-        # try:
-        messages_response_raw = http.request("GET", f"{myurl}/messages", headers={"Authorization": "Bearer " + session_jwt})
-        messages_response_decoded = messages_response_raw.data.decode("utf-8")
-        messages_json = json.loads(messages_response_decoded)
-        table = Table("ID", "Sender")
-        for message in messages_json:
-            table.add_row(str(message["id"]), str(message["sender"]))
-        console.print(table)
-        chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
-        file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
-        file_response_json = json.loads(file_response_raw.headers["file-metadata"])
-        encrypted_shared_secret = file_response_json["shared_secret"]
-        sender_id = file_response_json["sender_id"]
-        shared_secret = file_response_json["shared_secret"]
-        sender_signature = file_response_json["sender_signature"]
-        file_signature = file_response_json["file_signature"]
-        file_ciphertext = file_response_raw.data
-        file_plaintext = ""
-        sender_public_key = getPublicKey(sender_id)
-        with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None,
-                backend=default_backend()
-            )
-            
-        isValidKeySignature = verifyKeySignature(shared_secret, sender_signature, sender_public_key)
-        if not isValidKeySignature:
-            print("Warning: The key has been tampered with and is now invalid.\n")
-            continue
-        
-        decrypted_symmetric_key = decryptSignedKey(shared_secret, private_key)
+    signed_in = signIn(username)
 
-        isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
-        if not isValidFileSignature:
-            print("Warning: The file has been tampered with and is now invalid.\n")
-            continue
-        
-        nonce = file_ciphertext[:16]
-        extracted_ciphertext = file_ciphertext[16:]
-        file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
-
-        print("[bold]File Content:\n[/bold]")
-        print(file_plaintext)
-        print("\n")
-        if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
-            f = asksaveasfile(mode='wb')
-            f.write(file_plaintext)
-            f.close()
-        # except:
-        #     print("\nSomething went wrong...\n")
-        #     continue
-
-    if choice == "send":
-        try:
-            users = getAndPrintUsers()
-            option = Prompt.ask("Please choose the number of the receiving user (enter 'cancel' to cancel)")
-            if option == "cancel":
+    if not signed_in:
+        print("Exiting...")
+        exit()
+    
+    while True:
+        if session_jwt is not None:
+            try:
+                session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+            except jwt.InvalidTokenError:
+                print("\n[bold red]Invalid session token. Please sign in again.[/bold red]\n")
+                signIn(username)
                 continue
-            recipient = users[int(option)-1]["id"]
-            recipient_public_key_string = users[int(option)-1]["public_key"]
-            recipient_public_key = serialization.load_pem_public_key(
-                recipient_public_key_string.encode("utf-8"),
-            )
+                
+        table = Table("Option", "Description")
+        if session_details is not None:
+            table.add_row("read", "See files sent to you")
+            table.add_row("send", "Send a file to someone else")
 
+        table.add_row("logout", "Sign out of this account")
+        console.print(table)
+
+        choice = Prompt.ask("What would you like to do?")
+
+        if choice == "read":
+            # try:
+            messages_response_raw = http.request("GET", f"{myurl}/messages", headers={"Authorization": "Bearer " + session_jwt})
+            messages_response_decoded = messages_response_raw.data.decode("utf-8")
+            messages_json = json.loads(messages_response_decoded)
+            table = Table("ID", "Sender")
+            for message in messages_json:
+                table.add_row(str(message["id"]), str(message["sender"]))
+            console.print(table)
+            chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
+            file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
+            file_response_json = json.loads(file_response_raw.headers["file-metadata"])
+            encrypted_shared_secret = file_response_json["shared_secret"]
+            sender_id = file_response_json["sender_id"]
+            shared_secret = file_response_json["shared_secret"]
+            sender_signature = file_response_json["sender_signature"]
+            file_signature = file_response_json["file_signature"]
+            file_ciphertext = file_response_raw.data
+            file_plaintext = ""
+            sender_public_key = getPublicKey(sender_id)
             with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
                 private_key = serialization.load_pem_private_key(
                     key_file.read(),
                     password=None,
                     backend=default_backend()
                 )
-
-            symmetric_key = createSharedKey()
-
-            encrypted_key, s_signature = encryptSignSharedKey(symmetric_key, recipient_public_key, private_key)
-
-
-            print("Please choose a file:")
-            filename = askopenfilename()
-            file = open(filename, 'rb')
-            file_content = file.read()
-            encrypted_file_name, file_signature = encryptAndSignFile(filename, file_content, symmetric_key, private_key)
+                
+            isValidKeySignature = verifyKeySignature(shared_secret, sender_signature, sender_public_key)
+            if not isValidKeySignature:
+                print("Warning: The key has been tampered with and is now invalid.\n")
+                continue
             
-            fields = {
-                "recipient": recipient,
-                "shared_key": encrypted_key,
-                "sender_signature": s_signature,
-                "file_signature": file_signature,
-                "file": (encrypted_file_name, open(encrypted_file_name, "rb").read()),
-            }
+            decrypted_symmetric_key = decryptSignedKey(shared_secret, private_key)
+
+            isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
+            if not isValidFileSignature:
+                print("Warning: The file has been tampered with and is now invalid.\n")
+                continue
             
-            body, header = urllib3.encode_multipart_formdata(fields)
+            nonce = file_ciphertext[:16]
+            extracted_ciphertext = file_ciphertext[16:]
+            file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
 
-            http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
-            os.remove(encrypted_file_name)
-            print("File sent!")
-        except KeyboardInterrupt:
-            print("\nSomething went wrong...\n")
-            continue
+            print("[bold]File Content:\n[/bold]")
+            print(file_plaintext)
+            print("\n")
+            if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
+                f = asksaveasfile(mode='wb')
+                f.write(file_plaintext)
+                f.close()
+            # except:
+            #     print("\nSomething went wrong...\n")
+            #     continue
 
-    if choice == "logout":
-        userid = ""
-        session_jwt = ""
-        username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
-        checkIfUser()
+        if choice == "send":
+            try:
+                users = getAndPrintUsers()
+                option = Prompt.ask("Please choose the number of the receiving user (enter 'cancel' to cancel)")
+                if option == "cancel":
+                    continue
+                recipient = users[int(option)-1]["id"]
+                recipient_public_key_string = users[int(option)-1]["public_key"]
+                recipient_public_key = serialization.load_pem_public_key(
+                    recipient_public_key_string.encode("utf-8"),
+                )
+
+                with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                    private_key = serialization.load_pem_private_key(
+                        key_file.read(),
+                        password=None,
+                        backend=default_backend()
+                    )
+
+                symmetric_key = createSharedKey()
+
+                encrypted_key, s_signature = encryptSignSharedKey(symmetric_key, recipient_public_key, private_key)
+
+
+                print("Please choose a file:")
+                filename = askopenfilename()
+                file = open(filename, 'rb')
+                file_content = file.read()
+                encrypted_file_name, file_signature = encryptAndSignFile(filename, file_content, symmetric_key, private_key)
+                
+                fields = {
+                    "recipient": recipient,
+                    "shared_key": encrypted_key,
+                    "sender_signature": s_signature,
+                    "file_signature": file_signature,
+                    "file": (encrypted_file_name, open(encrypted_file_name, "rb").read()),
+                }
+                
+                body, header = urllib3.encode_multipart_formdata(fields)
+
+                http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+                os.remove(encrypted_file_name)
+                print("File sent!")
+            except KeyboardInterrupt:
+                print("\nSomething went wrong...\n")
+                continue
+
+        if choice == "logout":
+            userid = ""
+            session_jwt = ""
+            break

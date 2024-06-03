@@ -58,7 +58,14 @@ def revoke_jwt(jwt):
     blockedJWT.save()
 
 @app.post("/create-user")
-async def create_user(user: CreateUserModel):
+async def create_user(user: CreateUserModel, Authorization: Annotated[str, Header()]):
+    session_details, _ = authenticate_jwt(Authorization)
+    
+    print(session_details)
+    
+    if "verified" not in session_details or session_details["verified"] is False:
+        return Response(status_code=423, content=json.dumps({"status": "error", "message": "Unverified token. Please complete captcha"}))
+    
     pattern = r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"
     if not re.match(pattern, user.password):
         return Response(status_code=422, content=json.dumps({"status": "error", "message": "Insufficient password"}))
@@ -81,7 +88,7 @@ async def create_user(user: CreateUserModel):
     return Response(status_code=200, content=json.dumps({"status": "Success", "message": "New user has been created!", "userid": newUser.id}))
 
 @app.get("/captcha")
-async def verify():
+async def captcha():
     challenge = requests.get("http://api.textcaptcha.com/myemail@example.com.json").json()
     answers = challenge["a"]
     question = challenge["q"]
@@ -101,7 +108,7 @@ async def verify():
     return Response(status_code=200, content=json.dumps({"status": "captcha_sent", "jwt": handshake_jwt, "question": ascii_art_question}))
 
 @app.post("/verify")
-async def handshake(Authorization: Annotated[str, Header()], answer: Annotated[str, Form()]):
+async def verify(Authorization: Annotated[str, Header()], answer: Annotated[str, Form()]):
     session_details, _ = authenticate_jwt(Authorization)
     answers = []
     for key in session_details:
@@ -135,7 +142,7 @@ async def handshake(Authorization: Annotated[str, Header()], answer: Annotated[s
 async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
     start = time.time()
     
-    session_details, login_jwt = authenticate_jwt(Authorization)
+    session_details, _ = authenticate_jwt(Authorization)
     
     if "verified" not in session_details or session_details["verified"] is False:
         return Response(status_code=423, content=json.dumps({"status": "error", "message": "Unverified token. Please complete captcha"}))
@@ -186,7 +193,7 @@ async def sign_in(username: Annotated[str, Form()], password: Annotated[str, For
 
 @app.post("/send-file")
 async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Annotated[str, Form()], shared_key: Annotated[str, Form()], sender_signature: Annotated[str, Form()], file_signature: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
-    session_details = authenticate_jwt(Authorization)
+    session_details, _ = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
     content = await file.read()
@@ -198,7 +205,7 @@ async def create_upload_file(file: Annotated[UploadFile, File()], recipient: Ann
 
 @app.get("/users")
 async def get_users(Authorization: Annotated[str, Header()]):
-    session_details = authenticate_jwt(Authorization)
+    session_details, _ = authenticate_jwt(Authorization)
     
     if (isinstance(session_details, Response)):
         return session_details
@@ -213,10 +220,10 @@ async def get_users(Authorization: Annotated[str, Header()]):
 
 @app.get("/messages")
 async def get_messages(Authorization: Annotated[str, Header()]):
-    session_details = authenticate_jwt(Authorization)
+    session_details, _ = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
-    user =  session_details["user_id"]
+    user = session_details["user_id"]
     response_content = []
     messages = Message.select().where(Message.recipient == user)
     for message in messages:
@@ -226,7 +233,7 @@ async def get_messages(Authorization: Annotated[str, Header()]):
 
 @app.get("/file")
 async def get_file(message_id: int, Authorization: Annotated[str, Header()]):
-    session_details = authenticate_jwt(Authorization)
+    session_details, _ = authenticate_jwt(Authorization)
     if (isinstance(session_details, Response)):
         return session_details
     message = Message.get_or_none(Message.id == message_id)
