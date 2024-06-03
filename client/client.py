@@ -27,11 +27,13 @@ http = urllib3.PoolManager()
 
 app = typer.Typer()
 
-myurl = 'http://127.0.0.1:8000'
+myurl = "http://localhost:8000"
 
 userid = ""
 
 session_jwt = ""
+
+userdata_path = ""
 
 def createPublicPrivateKeys(username):
     private_key = rsa.generate_private_key(
@@ -199,6 +201,7 @@ def checkIfUser():
     global username
     global userid
     global password
+    global userdata_path
 
     pattern = r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"
     signed_up = False
@@ -228,12 +231,6 @@ def checkIfUser():
                     signed_up = True
                 create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
                 create_user_json = json.loads(create_user_response_decoded)
-                
-                if not os.path.isdir(f"./userdata"):
-                    os.mkdir("./userdata")
-                    
-                if not os.path.isdir(f"./userdata/{username}"):
-                    os.mkdir(f"./userdata/{username}")
                 
                 f_private = open(userdata_path + "/private_key.pem", "wb")
                 f_private.write(private_pem)
@@ -375,7 +372,7 @@ while True:
                 file_ciphertext = file_response_raw.data
                 file_plaintext = ""
                 sender_public_key = getPublicKey(sender_id)
-                with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                with open(userdata_path + "/private_key.pem", "rb") as key_file:
                     private_key = serialization.load_pem_private_key(
                         key_file.read(),
                         password=None,
@@ -419,7 +416,7 @@ while True:
                     recipient_public_key_string.encode("utf-8"),
                 )
 
-                with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                with open(userdata_path + "/private_key.pem", "rb") as key_file:
                     private_key = serialization.load_pem_private_key(
                         key_file.read(),
                         password=None,
@@ -459,4 +456,5 @@ while True:
         if choice == "logout":
             userid = ""
             session_jwt = ""
+            userdata_path = ""
             break
