@@ -1,0 +1,81 @@
+# Secure File Transfer Application - The Real Glynn Shady
+LM173- CS4455 - Cybersecurity & Cryptography <br>
+Conor Callanan, Conor Glynn, Karl Gilmartin
+
+## Summary
+
+This project implements a secure, end-to-end encrypted file-sharing application. The application ensures that all communications between users are secure, authenticated, and verifiable to protect against unauthorized access and tampering.
+
+
+
+## Features
+
+- **User Registration and Authentication**: Secure user registration and login system using passwords and session tokens.
+- **End-to-End Encryption**: Client-side encryption and decryption to ensure files are only readable by intended recipients.
+- **File Upload and Download**: Authenticated users can upload and download files securely.
+- **Digital Signatures**: Ensure integrity and authenticity of the files and shared keys.
+
+
+## Overview
+
+### User Registration and Authentication
+- Users can create an account with a username and password.
+- For each subsequent login, the user must provide their username and password.
+- The server stores the user's password securely using a salted hash.
+- JWT tokens are used to authenticate users and protect against session hijacking.
+- JWT tokens are used to limimt the numebr of times a user can try to logged in.
+
+### End-to-End Encryption
+- Shared key is generated using RSA and encrypted using the recipient's public key.
+- A shared key is generated for each file and shared with the intended recipient.
+- Files are encrypted on the client-side before being uploaded to the server using AES (CTR mode).
+- The server stores the encrypted files and shared keys.
+- Files are decrypted on the client-side after being downloaded from the server.
+- Receivers must first decrypt the shared key using their private key before decrypting the file.
+
+### Digital Signatures
+- Files and shared keys are signed using the sender's private key to ensure integrity and authenticity.
+- Receivers can verify the signature using the sender's public key.
+
+### Database Security
+- User passwords are stored securely using a salted hash.
+- Regex and sanaity checks are used to ensure that the data is valid.
+
+
+
+## Tech Stack
+
+- **Backend**: Python (FastAPI)
+- **Database**: SQLite
+- **Encryption**: RSA, AES (CTR mode)
+
+## Installation
+
+### Setup
+
+1. **Clone the repository**:
+   ```sh
+   git clone https://github.com/ConorCallanan2003/cryptography-assignment
+    ```
+
+2. **Install prerecquites**:
+    ```sh
+    cd cryptography-assignment
+    pip install -r requirements.txt
+   ```
+3. **Create the database**
+    ```sh
+    cd server
+    python3 db.py
+    ```
+4. **Run the server**
+    ```sh
+    uvicorn server:app --reload 
+    ```
+5. **Run the client**
+    ```sh
+    cd ..
+    python3 client.py
+    ```
+
+

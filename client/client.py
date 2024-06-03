@@ -29,7 +29,7 @@ app = typer.Typer()
 myurl = 'http://127.0.0.1:8000'
 
 userid = ""
-username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
+
 
 session_jwt = ""
 
@@ -221,6 +221,7 @@ def checkIfUser():
         os.mkdir(f"./userdata/{username}")
 
         public_pem = createPublicPrivateKeys(username)
+
         create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
         create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
         if create_user_response_raw.status == 200:
@@ -247,33 +248,75 @@ def checkIfUser():
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
+
         print("[bold blue]New user has been created![/bold blue]")
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
         password = Prompt.ask("Enter your password: ")
+        
 
-def signIn(username, password):
+def signIn(username):
     global session_jwt
-    sign_in_data = {"username": username, "password": password}
-    encoded_sign_in_data = json.dumps(sign_in_data).encode('utf-8')
-    sign_in_response_raw = http.request("POST", f"{myurl}/sign-in", body=encoded_sign_in_data)
-    sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
-    sign_in_response_json = json.loads(sign_in_response_decoded)
-    if sign_in_response_raw.status != 200:
-        print("\n[bold red]Error signing in...[/bold red]\n")
-    session_jwt = sign_in_response_json["jwt"]
+    global password
+
+    while True:
+
+        fields = {
+            "username": username,
+            "password": password
+        }
+        body, header = urllib3.encode_multipart_formdata(fields)
+
+        sign_in_response_raw = http.request(
+            "POST", 
+            f"{myurl}/sign-in",
+            headers={"Authorization": f"Bearer {session_jwt}", "Content-Type": header},
+            body=body
+        )
+        sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
+        sign_in_response_json = json.loads(sign_in_response_decoded)
+        print(sign_in_response_json)
+
+        session_jwt = sign_in_response_json["jwt"]
+
+        if sign_in_response_raw.status == 401:
+            print("\n[bold red]Error signing in...[/bold red]\n")
+            password = Prompt.ask("Enter your password: ")
+            
+        elif sign_in_response_raw.status == 423:
+            print("\n[bold red]Too many attempts...[/bold red]\n")
+            return False
+
+        elif sign_in_response_raw.status == 200:
+            session_jwt = sign_in_response_json["jwt"]
+            print("\n[bold green]Signed in successfully![/bold green]\n")
+            return True
+
+print("Handshaking with server...")
+handshake_response = http.request("GET", f"{myurl}/handshake")
+handshake_json_response = json.loads(handshake_response.data.decode("utf-8"))
+session_jwt = handshake_json_response["jwt"]
+
+username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
 checkIfUser()
 
-signIn(username, password)
+signed_in = signIn(username)
+
+if not signed_in:
+    print("Exiting...")
+    exit()
 
 while True:
-    if session_jwt == "":
-        print("Invalid session token. Please try logging out and logging in again.")
-    else:
-        session_details = jwt.decode(session_jwt, options={"verify_signature": False})
-        
+    if session_jwt is not None:
+        try:
+            session_details = jwt.decode(session_jwt, options={"verify_signature": False})
+        except jwt.InvalidTokenError:
+            print("\n[bold red]Invalid session token. Please sign in again.[/bold red]\n")
+            signIn(username)
+            continue
+            
     table = Table("Option", "Description")
     if session_details is not None:
         table.add_row("read", "See files sent to you")
