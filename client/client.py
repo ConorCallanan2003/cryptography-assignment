@@ -435,7 +435,10 @@ while True:
                 
                 body, header = urllib3.encode_multipart_formdata(fields)
 
-                http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+                send_file_response_raw = http.request("POST", f"{myurl}/send-file", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+                send_file_response_decoded = send_file_response_raw.data.decode("utf-8")
+                send_file_json = json.loads(send_file_response_decoded)
+                session_jwt = send_file_json["jwt"]
                 os.remove(encrypted_file_name)
                 print("File sent!")
             except KeyboardInterrupt:
