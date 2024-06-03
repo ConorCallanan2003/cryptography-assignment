@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 jwt_secret = os.urandom(32)
+MAX_FAILED_ATTEMPTS = 3
 
 app = FastAPI()
 
@@ -42,7 +43,7 @@ def authenticate_jwt(authorization):
     if (exp_dt > datetime.now()):
         return Response(status_code=401, content=f"Error: Authentication token expired")
     print(session_details)
-    return session_details
+    return session_details, auth_token
 
 @app.post("/create-user")
 async def create_user(user: CreateUserModel):
@@ -65,44 +66,76 @@ async def create_user(user: CreateUserModel):
     newPassword.save()
     return Response(status_code=200, content=json.dumps({"status": "Success", "message": "New user has been created!", "userid": newUser.id}))
 
+@app.get("/handshake")
+async def handshake():
+    handshake_jwt = jwt.encode({"user_id": None, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": 0}, jwt_secret, algorithm="HS256")
+    return Response(status_code=200, content=json.dumps({"status": "handshake", "jwt": handshake_jwt}))
+    
 @app.post("/sign-in")
-async def sign_in(sign_in_details: SignInDetails):
+async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
     start = time.time()
-    user = User.get_or_none(User.username == sign_in_details.username)
-    if user == None:
-        end = time.time()
-        if (end - start < 0.5):
-            time.sleep(0.5 - (end - start))
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
-    
-    user_password = Password.get_or_none(Password.user == user.id)
-    if user_password is None:
-        end = time.time()
-        if (end - start < 0.5):
-            time.sleep(0.5 - (end - start))
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
-    
-    kdf = Scrypt(
-        salt=base64.b64decode(user_password.salt),
-        length=32,
-        n=2**14,
-        r=8,
-        p=1,
-    )
-    
     try:
-        kdf.verify(str.encode(sign_in_details.password), base64.b64decode(user_password.hashed_pw))
-    except:
-        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        user = User.get_or_none(User.username == username)
+        if user is None:
+            end = time.time()
+            if end - start < 0.5:
+                time.sleep(0.5 - (end - start))
+            return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        
+        user_password = Password.get_or_none(Password.user == user.id)
+        if user_password is None:
+            end = time.time()
+            if end - start < 0.5:
+                time.sleep(0.5 - (end - start))
+            return Response(status_code=500, content=json.dumps({"status": "error", "message": "Incorrect username and/or password"}))
+        
+        kdf = Scrypt(
+            salt=base64.b64decode(user_password.salt),
+            length=32,
+            n=2**14,
+            r=8,
+            p=1,
+        )
 
-    session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
+        
+        session_details, login_jwt = authenticate_jwt(Authorization)
 
-    end = time.time()
+        try:
+            kdf.verify(password.encode(), base64.b64decode(user_password.hashed_pw))
+        except:
+            #get userid form the session_details
+            if session_details["failed_attempts"] == 0:
+                failed_attempts = 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
+            elif session_details["failed_attempts"] != 0:
+                failed_attempts = session_details["failed_attempts"]
+                failed_attempts += 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                if failed_attempts >= MAX_FAILED_ATTEMPTS:
+                    # Captcha code here
+                    print("Too many failed login attempts")
+                    return Response(status_code=423, content=json.dumps({"status": "error", "message": "Too many failed login attempts", "jwt": token}))
+                else:
+                    token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                    return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
+            else:
+                print("Failed attempts is None, in else")
+                failed_attempts = 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
 
-    if (end - start < 0.5):
-        time.sleep(0.5 - (end - start))
+        session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(), "exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
+        end = time.time()
 
-    return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
+        if end - start < 0.5:
+            time.sleep(0.5 - (end - start))
+        print(f"User {username} signed in")
+        return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
+    except Exception as e:
+        print(f"Exception occurred: {e}")
+        return Response(status_code=500, content=json.dumps({"status": "error", "message": "Internal Server Error"}))
+
 
 
 @app.post("/send-file")
