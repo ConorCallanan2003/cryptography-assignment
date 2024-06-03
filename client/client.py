@@ -30,7 +30,6 @@ myurl = 'http://127.0.0.1:8000'
 
 userid = ""
 
-
 session_jwt = ""
 
 def createPublicPrivateKeys(username):
@@ -207,31 +206,40 @@ def checkIfUser():
         print("User does not exist. \n")
         newUser = True
     if username == "" or newUser:
-        username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-        password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
-        while not re.match(pattern, password):
-            password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
-        if not os.path.isdir(f"./userdata"):
-            os.mkdir("./userdata")
-        os.mkdir(f"./userdata/{username}")
-    
-        public_pem = createPublicPrivateKeys(username)
+        signed_up = False
+        while not signed_up:
+            username = Prompt.ask("[bold green]Enter your new username![/bold green]")
+            password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
+            while not re.match(pattern, password):
+                password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
+            if not os.path.isdir(f"./userdata"):
+                os.mkdir("./userdata")
+            os.mkdir(f"./userdata/{username}")
+        
+            public_pem = createPublicPrivateKeys(username)
+            
+            create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
+            create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
+            if create_user_response_raw.status == 423:
+                print("[bold red]Username already taken![/bold red]\n")
+                os.remove(f"./userdata/{username}/private_key.pem")
+                os.rmdir(f"./userdata/{username}")
+                continue
+            else:
+                signed_up = True
+            create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
+            create_user_json = json.loads(create_user_response_decoded)
+            
+            f_public = open(f"./userdata/{username}/public_key.pem", "wb")
+            f_public.write(public_pem)
+            f_username = open(f"./userdata/{username}/username.txt", "w")
+            f_username.write(username)
 
-        f_public = open(f"./userdata/{username}/public_key.pem", "wb")
-        f_public.write(public_pem)
-        f_username = open(f"./userdata/{username}/username.txt", "w")
-        f_username.write(username)
+            userid = str(create_user_json["userid"])
+            userid_file = open(f"./userdata/{username}/userid.txt", "w")
+            userid_file.write(userid)
 
-        create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
-        create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
-        create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
-        create_user_json = json.loads(create_user_response_decoded)
-
-        userid = str(create_user_json["userid"])
-        userid_file = open(f"./userdata/{username}/userid.txt", "w")
-        userid_file.write(userid)
-
-        print("[bold blue]New user has been created![/bold blue]")
+            print("[bold blue]New user has been created![/bold blue]")
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
@@ -275,10 +283,24 @@ def signIn(username):
             print("\n[bold green]Signed in successfully![/bold green]\n")
             return True
 
-print("Handshaking with server...")
-handshake_response = http.request("GET", f"{myurl}/handshake")
-handshake_json_response = json.loads(handshake_response.data.decode("utf-8"))
-session_jwt = handshake_json_response["jwt"]
+captcha_response = http.request("GET", f"{myurl}/captcha")
+captcha_response_json = json.loads(captcha_response.data.decode("utf-8"))
+session_jwt = captcha_response_json["jwt"]
+question = captcha_response_json["question"]
+
+answer = Prompt.ask(f"\n{question}\n[bold]Please answer this question to prove you are human! (lowercase only) [/bold]\nAnswer")
+
+fields = {
+    "answer": answer
+}
+            
+body, header = urllib3.encode_multipart_formdata(fields)
+
+verify_response = http.request("POST", f"{myurl}/verify", headers={"Authorization": "Bearer " + session_jwt, "content-type": header}, body=body)
+if verify_response.status != 200:
+    print("\n[bold red]Error verifying... Try again. [/bold red]\n")
+    exit()
+verify_response_json = json.loads(verify_response.data.decode("utf-8"))
 
 username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
@@ -346,7 +368,7 @@ while True:
         isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
         if not isValidFileSignature:
             print("Warning: The file has been tampered with and is now invalid.\n")
-            # continue
+            continue
         
         nonce = file_ciphertext[:16]
         extracted_ciphertext = file_ciphertext[16:]
