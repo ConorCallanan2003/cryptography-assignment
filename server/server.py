@@ -25,7 +25,6 @@ class CreateUserModel(BaseModel):
 class SignInDetails(BaseModel):
     username: str
     password: str
-    # login_jwt: str
 
 class AuthenticatedRequest(BaseModel):
     jwt: str
@@ -44,10 +43,7 @@ def authenticate_jwt(authorization):
     if (exp_dt > datetime.now()):
         return Response(status_code=401, content=f"Error: Authentication token expired")
     print(session_details)
-    return session_details
-
-def create_jwt_login_attempts(user_id: int, failed_attempts: int ):
-    return jwt.encode({"user_id": user_id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+    return session_details, auth_token
 
 @app.post("/create-user")
 async def create_user(user: CreateUserModel):
@@ -69,9 +65,14 @@ async def create_user(user: CreateUserModel):
     newPassword = Password.create(user=newUser.id, hashed_pw=base64.b64encode(digest), salt=base64.b64encode(salt))
     newPassword.save()
     return Response(status_code=200, content=json.dumps({"status": "Success", "message": "New user has been created!", "userid": newUser.id}))
+
+@app.get("/handshake")
+async def handshake():
+    handshake_jwt = jwt.encode({"user_id": None, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": 0}, jwt_secret, algorithm="HS256")
+    return Response(status_code=200, content=json.dumps({"status": "handshake", "jwt": handshake_jwt}))
     
 @app.post("/sign-in")
-async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], authorization: Annotated[str, Header()]):
+async def sign_in(username: Annotated[str, Form()], password: Annotated[str, Form()], Authorization: Annotated[str, Header()]):
     start = time.time()
     try:
         user = User.get_or_none(User.username == username)
@@ -96,50 +97,40 @@ async def sign_in(username: Annotated[str, Form()], password: Annotated[str, For
             p=1,
         )
 
-        login_jwt = None
-        if authorization.startswith("Bearer ") and len(authorization) > 7 and authorization[7] != " ":
-            login_jwt = authorization[len("Bearer "):]
-            try:
-                session_details = jwt.decode(login_jwt, jwt_secret, algorithms="HS256")
-                print(session_details)
-            except jwt.ExpiredSignatureError:
-                return Response(status_code=401, content=f"Error: Token has expired")
-            except jwt.InvalidTokenError:
-                return Response(status_code=401, content=f"Error: Invalid authentication token")
-        else:
-            print("No JWT provided")
-            login_jwt = None
         
+        session_details, login_jwt = authenticate_jwt(Authorization)
 
         try:
             kdf.verify(password.encode(), base64.b64decode(user_password.hashed_pw))
-            print("Password verified")
         except:
-            print("Password verification failed")
-            if login_jwt is not None:
-                failed_attempts = jwt.decode(login_jwt, jwt_secret, algorithms="HS256")["failed_attempts"]
+            #get userid form the session_details
+            if session_details["failed_attempts"] == 0:
+                failed_attempts = 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
+            elif session_details["failed_attempts"] != 0:
+                failed_attempts = session_details["failed_attempts"]
+                failed_attempts += 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                if failed_attempts >= MAX_FAILED_ATTEMPTS:
+                    # Captcha code here
+                    print("Too many failed login attempts")
+                    return Response(status_code=423, content=json.dumps({"status": "error", "message": "Too many failed login attempts", "jwt": token}))
+                else:
+                    token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                    return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
             else:
-                print("Creating new token, setting failed attempts to 1")
-                failed_attempts = 0
-
-            failed_attempts += 1
-            token = create_jwt_login_attempts(user.id, failed_attempts)
-
-            if failed_attempts >= MAX_FAILED_ATTEMPTS:
-                # Block user for a period of time
-
-                return Response(status_code=500, content=json.dumps({"status": "error", "message": "Too many failed login attempts", "jwt_login": token}))
-            else:
-                print("creating token and sending it")
-                print(f"JWT: {token}")
-                return Response(status_code=404, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt_login": token}))
+                print("Failed attempts is None, in else")
+                failed_attempts = 1
+                token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+                return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
 
         session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(), "exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
         end = time.time()
 
         if end - start < 0.5:
             time.sleep(0.5 - (end - start))
-
+        print(f"User {username} signed in")
         return Response(status_code=200, content=json.dumps({"status": "signed in", "jwt": session_jwt}))
     except Exception as e:
         print(f"Exception occurred: {e}")

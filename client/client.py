@@ -28,10 +28,9 @@ app = typer.Typer()
 myurl = 'http://127.0.0.1:8000'
 
 userid = ""
-username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
+
 
 session_jwt = ""
-login_jwt = ""
 
 def createPublicPrivateKeys(username):
     private_key = rsa.generate_private_key(
@@ -218,74 +217,84 @@ def checkIfUser():
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
-        print(public_pem)
+
         create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
-        print(create_user_data)
         create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
         create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
         create_user_json = json.loads(create_user_response_decoded)
+
         userid = str(create_user_json["userid"])
         userid_file = open(f"./userdata/{username}/userid.txt", "w")
         userid_file.write(userid)
+
         print("[bold blue]New user has been created![/bold blue]")
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()
         username = open(f"./userdata/{username}/username.txt", "r").readline()
         password = Prompt.ask("Enter your password: ")
-
-def signIn(username, password):
-    global session_jwt
-    global login_jwt
-   
-    print(f"Sending login information with JWT {login_jwt}")
-    fields = {
-        "username": username,
-        "password": password
-    }
-    body, header = urllib3.encode_multipart_formdata(fields)
-    sign_in_response_raw = http.request(
-        "POST", 
-        f"{myurl}/sign-in",
-        headers={"Authorization": f"Bearer {login_jwt}", "Content-Type": header},
-        body=body
-    )
-    sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
-    sign_in_response_json = json.loads(sign_in_response_decoded)
-    print(f"Sign in response json: {sign_in_response_json}")
-    if sign_in_response_raw.status != 200:
-        print("\n[bold red]Error signing in...[/bold red]\n")
-        login_jwt = sign_in_response_json["jwt_login"]
-    try:
-        session_jwt = sign_in_response_json["jwt"]
         
-    except KeyError:
-        print("didn't receive session jwt")
-        session_jwt = None
-    print(f"Session JWT: {session_jwt}")
-    # print(f"length of sesssion jwt: {len(session_jwt)}")
-    print(f"Login JWT: {login_jwt}")
 
+def signIn(username):
+    global session_jwt
+    global password
+
+    while True:
+
+        fields = {
+            "username": username,
+            "password": password
+        }
+        body, header = urllib3.encode_multipart_formdata(fields)
+
+        sign_in_response_raw = http.request(
+            "POST", 
+            f"{myurl}/sign-in",
+            headers={"Authorization": f"Bearer {session_jwt}", "Content-Type": header},
+            body=body
+        )
+        sign_in_response_decoded = sign_in_response_raw.data.decode("utf-8")
+        sign_in_response_json = json.loads(sign_in_response_decoded)
+        print(sign_in_response_json)
+
+        session_jwt = sign_in_response_json["jwt"]
+
+        if sign_in_response_raw.status == 401:
+            print("\n[bold red]Error signing in...[/bold red]\n")
+            password = Prompt.ask("Enter your password: ")
+            
+        elif sign_in_response_raw.status == 423:
+            print("\n[bold red]Too many attempts...[/bold red]\n")
+            return False
+
+        elif sign_in_response_raw.status == 200:
+            session_jwt = sign_in_response_json["jwt"]
+            print("\n[bold green]Signed in successfully![/bold green]\n")
+            return True
+
+print("Handshaking with server...")
+handshake_response = http.request("GET", f"{myurl}/handshake")
+handshake_json_response = json.loads(handshake_response.data.decode("utf-8"))
+session_jwt = handshake_json_response["jwt"]
+
+username = Prompt.ask("[bold]What is your username? (Leave blank to create a new user)[/bold]")
 
 checkIfUser()
 
-signIn(username, password)
+signed_in = signIn(username)
+
+if not signed_in:
+    print("Exiting...")
+    exit()
 
 while True:
-    while session_jwt == None:
-        print("Invalid session token. Please try logging out and logging in again.")
-        checkIfUser()
-        signIn(username, password)
     if session_jwt is not None:
-        print(f"Session JWT: {session_jwt}")
         try:
             session_details = jwt.decode(session_jwt, options={"verify_signature": False})
         except jwt.InvalidTokenError:
             print("\n[bold red]Invalid session token. Please sign in again.[/bold red]\n")
-            signIn(username, password)
+            signIn(username)
             continue
             
-
-        
     table = Table("Option", "Description")
     if session_details is not None:
         table.add_row("read", "See files sent to you")
