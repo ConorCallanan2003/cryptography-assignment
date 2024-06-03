@@ -35,15 +35,12 @@ class Message(Model):
         database = db
 
 class BlockedJWTs(Model):
-    jwt = CharField()
+    jwt = CharField(index=True)
 
     class Meta:
         database = db
-        indexes = (
-            (('jwt'), True),
-        )
 
 
 db.connect()
 
-db.create_tables([User, File, Message, Password])
+db.create_tables([User, File, Message, Password, BlockedJWTs])
