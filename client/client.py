@@ -342,58 +342,56 @@ while True:
         choice = Prompt.ask("What would you like to do?")
 
         if choice == "read":
-            # try:
-            messages_response_raw = http.request("GET", f"{myurl}/messages", headers={"Authorization": "Bearer " + session_jwt})
-            messages_response_decoded = messages_response_raw.data.decode("utf-8")
-            messages_json = json.loads(messages_response_decoded)
-            table = Table("ID", "Sender")
-            for message in messages_json:
-                table.add_row(str(message["id"]), str(message["sender"]))
-            console.print(table)
-            chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
-            file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
-            file_response_json = json.loads(file_response_raw.headers["file-metadata"])
-            encrypted_shared_secret = file_response_json["shared_secret"]
-            sender_id = file_response_json["sender_id"]
-            shared_secret = file_response_json["shared_secret"]
-            sender_signature = file_response_json["sender_signature"]
-            file_signature = file_response_json["file_signature"]
-            file_ciphertext = file_response_raw.data
-            file_plaintext = ""
-            sender_public_key = getPublicKey(sender_id)
-            with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
-                private_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=None,
-                    backend=default_backend()
-                )
+            try:
+                messages_response_raw = http.request("GET", f"{myurl}/messages", headers={"Authorization": "Bearer " + session_jwt})
+                messages_response_decoded = messages_response_raw.data.decode("utf-8")
+                messages_json = json.loads(messages_response_decoded)
+                table = Table("ID", "Sender")
+                for message in messages_json:
+                    table.add_row(str(message["id"]), str(message["sender"]))
+                console.print(table)
+                chosen_id = int(Prompt.ask("Which file would you like to read? (Enter ID)"))
+                file_response_raw = http.request("GET", f"{myurl}/file?message_id={chosen_id}", headers={"Authorization": "Bearer " + session_jwt})
+                file_response_json = json.loads(file_response_raw.headers["file-metadata"])
+                encrypted_shared_secret = file_response_json["shared_secret"]
+                sender_id = file_response_json["sender_id"]
+                shared_secret = file_response_json["shared_secret"]
+                sender_signature = file_response_json["sender_signature"]
+                file_signature = file_response_json["file_signature"]
+                file_ciphertext = file_response_raw.data
+                file_plaintext = ""
+                sender_public_key = getPublicKey(sender_id)
+                with open(f"./userdata/{username}/private_key.pem", "rb") as key_file:
+                    private_key = serialization.load_pem_private_key(
+                        key_file.read(),
+                        password=None,
+                        backend=default_backend()
+                    )
+                    
+                isValidKeySignature = verifyKeySignature(shared_secret, sender_signature, sender_public_key)
+                if not isValidKeySignature:
+                    print("Warning: The key has been tampered with and is now invalid.\n")
+                    continue
                 
-            isValidKeySignature = verifyKeySignature(shared_secret, sender_signature, sender_public_key)
-            if not isValidKeySignature:
-                print("Warning: The key has been tampered with and is now invalid.\n")
-                continue
-            
-            decrypted_symmetric_key = decryptSignedKey(shared_secret, private_key)
+                decrypted_symmetric_key = decryptSignedKey(shared_secret, private_key)
 
-            isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
-            if not isValidFileSignature:
-                print("Warning: The file has been tampered with and is now invalid.\n")
-                continue
-            
-            nonce = file_ciphertext[:16]
-            extracted_ciphertext = file_ciphertext[16:]
-            file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
+                isValidFileSignature = verifyFileSignature(file_signature, file_ciphertext, sender_public_key)
+                if not isValidFileSignature:
+                    print("Warning: The file has been tampered with and is now invalid.\n")
+                    continue
+                
+                nonce = file_ciphertext[:16]
+                extracted_ciphertext = file_ciphertext[16:]
+                file_plaintext = decryptFile(extracted_ciphertext, decrypted_symmetric_key, nonce)
 
-            print("[bold]File Content:\n[/bold]")
-            print(file_plaintext)
-            print("\n")
-            if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
-                f = asksaveasfile(mode='wb')
-                f.write(file_plaintext)
-                f.close()
-            # except:
-            #     print("\nSomething went wrong...\n")
-            #     continue
+                print("\n")
+                if Confirm.ask("[bold]Do you want to save this file?[/bold]"):
+                    f = asksaveasfile(mode='wb')
+                    f.write(file_plaintext)
+                    f.close()
+            except:
+                print("\nSomething went wrong...\n")
+                continue
 
         if choice == "send":
             try:
@@ -417,7 +415,6 @@ while True:
                 symmetric_key = createSharedKey()
 
                 encrypted_key, s_signature = encryptSignSharedKey(symmetric_key, recipient_public_key, private_key)
-
 
                 print("Please choose a file:")
                 filename = askopenfilename()

@@ -178,7 +178,7 @@ async def sign_in(username: Annotated[str, Form()], password: Annotated[str, For
     except:
         failed_attempts = session_details["failed_attempts"]
         failed_attempts += 1
-        token = jwt.encode({"user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
+        token = jwt.encode({"verified": True, "user_id": user.id, "iat": time.time(),"exp": time.time() + 1800, "failed_attempts": failed_attempts}, jwt_secret, algorithm="HS256")
         return Response(status_code=401, content=json.dumps({"status": "error", "message": "Incorrect username and/or password", "jwt": token}))
 
     session_jwt = jwt.encode({"user_id": user.id, "iat": time.time(), "exp": time.time() + 1800}, jwt_secret, algorithm="HS256")
