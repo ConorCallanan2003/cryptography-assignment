@@ -77,5 +77,15 @@ This project implements a secure, end-to-end encrypted file-sharing application.
     cd ..
     python3 client.py
     ```
+## Planning
+Here are some photos from our planning meetings, with different versions of our project.
 
+**Version 1:** <br>
 
+![image](./assets/photos/Version1Photo2.jpg)
+
+![image](./assets/photos/Version1Photo1.jpg)
+<br><br>
+**Version 2 (Final Version):**
+
+![image](./assets/photos/Version2Photo1.jpg)
