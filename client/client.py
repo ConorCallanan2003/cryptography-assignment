@@ -209,27 +209,38 @@ def checkIfUser():
     if username == "" or newUser:
         username = Prompt.ask("[bold green]Enter your new username![/bold green]")
         password = Prompt.ask("[bold blue]Enter your new password![/bold blue]")
-        while not re.match(pattern, password):
-            password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
-        if not os.path.isdir(f"./userdata"):
-            os.mkdir("./userdata")
-        os.mkdir(f"./userdata/{username}")
-    
-        public_pem = createPublicPrivateKeys(username)
 
+        sufficient_password = re.match(pattern, password)
+
+        while not sufficient_password:
+            while not sufficient_password:
+                password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]")
+                sufficient_password = re.match(pattern, password)
+            if not os.path.isdir(f"./userdata"):
+                os.mkdir("./userdata")
+            os.mkdir(f"./userdata/{username}")
+        
+            public_pem = createPublicPrivateKeys(username)
+
+            create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
+            create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
+            if create_user_response_raw.status == 422:
+                print("\n[bold red]Error creating user...[/bold red]\n")
+                sufficient_password = False
+                continue
+            else:
+                sufficient_password = True
+
+        create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
+        create_user_json = json.loads(create_user_response_decoded)
+
+        userid = str(create_user_json["userid"])
+        userid_file = open(f"./userdata/{username}/userid.txt", "w")
+        userid_file.write(userid)
         f_public = open(f"./userdata/{username}/public_key.pem", "wb")
         f_public.write(public_pem)
         f_username = open(f"./userdata/{username}/username.txt", "w")
         f_username.write(username)
-        print(public_pem)
-        create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
-        print(create_user_data)
-        create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Content-Type": "application/json"})
-        create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
-        create_user_json = json.loads(create_user_response_decoded)
-        userid = str(create_user_json["userid"])
-        userid_file = open(f"./userdata/{username}/userid.txt", "w")
-        userid_file.write(userid)
         print("[bold blue]New user has been created![/bold blue]")
     else:
         userid = open(f"./userdata/{username}/userid.txt", "r").readline()

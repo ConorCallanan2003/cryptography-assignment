@@ -34,6 +34,15 @@ class Message(Model):
     class Meta:
         database = db
 
+class BlockedJWTs(Model):
+    jwt = CharField()
+
+    class Meta:
+        database = db
+        indexes = (
+            (('jwt'), True),
+        )
+
 
 db.connect()
 
