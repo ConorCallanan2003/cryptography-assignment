@@ -6,8 +6,8 @@ import base64
 import typer
 import secrets
 import re
-import pwinput
 from tkinter.filedialog import askopenfilename
+from tkinter.filedialog import askdirectory
 from tkinter.filedialog import asksaveasfile
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -199,54 +199,65 @@ def checkIfUser():
     global username
     global userid
     global password
-    newUser = False
+
     pattern = r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"
-    if not os.path.isdir(f"./userdata/{username}"):
-        print("User does not exist. \n")
-        newUser = True
-    if username == "" or newUser:
-        signed_up = False
-        while not signed_up:
-            username = Prompt.ask("[bold green]Enter your new username![/bold green]")
-            password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
-            while not re.match(pattern, password):
-                password = pwinput.pwinput("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red][bold blue]\nPlease enter a valid password![/bold blue]", mask='*')
-        
-            public_pem, private_pem = createPublicPrivateKeys(username)
-            
-            create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
-            create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Authorization": f"Bearer {session_jwt}", "Content-Type": "application/json"})
-            if create_user_response_raw.status == 423:
-                print("[bold red]Username already taken![/bold red]\n")
-                continue
-            else:
-                signed_up = True
-            create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
-            create_user_json = json.loads(create_user_response_decoded)
-            
-            if not os.path.isdir(f"./userdata"):
-                os.mkdir("./userdata")
+    signed_up = False
+    signed_in = False
+    
+    while not signed_in and not signed_up:
+        if username == "":
+            while not signed_up:
+                print("[bold]Please choose where you would like to store your user data![/bold]")
+                userdata_path = askdirectory()
                 
-            if not os.path.isdir(f"./userdata/{username}"):
-                os.mkdir(f"./userdata/{username}")
+                if not os.path.isdir(userdata_path):
+                    os.mkdir(userdata_path)
+                username = Prompt.ask("[bold green]Enter your new username![/bold green]")
+                password = Prompt.ask(prompt="[bold blue]Enter your new password![/bold blue] ", password=True)
+                while not re.match(pattern, password):
+                    password = Prompt.ask("[bold red]Password must contain at least one uppercase, one lowercase letter, one number and be at least eight characters in length.[/bold red] [bold blue]\nPlease enter a valid password![/bold blue]", password=True)
             
-            f_private = open(f"./userdata/{username}/private_key.pem", "wb")
-            f_private.write(private_pem)
-            
-            f_public = open(f"./userdata/{username}/public_key.pem", "wb")
-            f_public.write(public_pem)
-            f_username = open(f"./userdata/{username}/username.txt", "w")
-            f_username.write(username)
+                public_pem, private_pem = createPublicPrivateKeys(username)
+                
+                create_user_data = {"username": username, "password": password, "public_key": public_pem.decode("utf-8")}
+                create_user_response_raw = http.request("POST", f"{myurl}/create-user", json=create_user_data, headers={"Authorization": f"Bearer {session_jwt}", "Content-Type": "application/json"})
+                if create_user_response_raw.status == 423:
+                    print("[bold red]Username already taken![/bold red]\n")
+                    continue
+                else:
+                    signed_up = True
+                create_user_response_decoded = create_user_response_raw.data.decode("utf-8")
+                create_user_json = json.loads(create_user_response_decoded)
+                
+                if not os.path.isdir(f"./userdata"):
+                    os.mkdir("./userdata")
+                    
+                if not os.path.isdir(f"./userdata/{username}"):
+                    os.mkdir(f"./userdata/{username}")
+                
+                f_private = open(userdata_path + "/private_key.pem", "wb")
+                f_private.write(private_pem)
+                
+                f_public = open(userdata_path + "/public_key.pem", "wb")
+                f_public.write(public_pem)
+                f_username = open(userdata_path + "/username.txt", "w")
+                f_username.write(username)
 
-            userid = str(create_user_json["userid"])
-            userid_file = open(f"./userdata/{username}/userid.txt", "w")
-            userid_file.write(userid)
+                userid = str(create_user_json["userid"])
+                userid_file = open(userdata_path + "/userid.txt", "w")
+                userid_file.write(userid)
 
-            print("[bold blue]New user has been created![/bold blue]")
-    else:
-        userid = open(f"./userdata/{username}/userid.txt", "r").readline()
-        username = open(f"./userdata/{username}/username.txt", "r").readline()
-        password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
+                print("[bold blue]New user has been created![/bold blue]")
+        else:
+            print("[bold]Please select your user data directory[/bold]")
+            userdata_path = askdirectory()
+            if not os.path.isdir(userdata_path):
+                print("[bold red]Directory does not exist![/bold red]")
+                continue
+            userid = open(userdata_path + "/userid.txt", "r").readline()
+            username = open(userdata_path + "/username.txt", "r").readline()
+            password = Prompt.ask(prompt='Enter your password: ', password=True)
+            signed_in = True
         
 
 def signIn(username):
@@ -274,7 +285,7 @@ def signIn(username):
 
         if sign_in_response_raw.status == 401:
             print("\n[bold red]Error signing in...[/bold red]\n")
-            password = pwinput.pwinput(prompt='Enter your password: ', mask='*')
+            password = Prompt.ask(prompt='Enter your password: ', password=True)
             
         elif sign_in_response_raw.status == 423:
             print("\n[bold red]Too many attempts...[/bold red]\n")

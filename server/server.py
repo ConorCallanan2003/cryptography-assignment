@@ -8,13 +8,13 @@ from typing import Annotated
 import jwt
 import base64
 from db import *
+import re
 from fastapi import FastAPI, Form, HTTPException, Header, Response, UploadFile
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-import re
 
 jwt_secret = secrets.token_bytes(32)
 captch_secret = secrets.token_bytes(32)
