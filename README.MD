@@ -1,6 +1,6 @@
 # Secure File Transfer Application - The Real Glynn Shady
 LM173- CS4455 - Cybersecurity & Cryptography <br>
-Conor Callanan, Conor Glynn, Karl Gilmartin
+Conor Callanan(22357327), Conor Glynn(22352155), Karl Gilmartin(22349111)
 
 ## Summary
 
