@@ -90,14 +90,17 @@ Here are some photos from our planning meetings, with different versions of our 
 
 Using only Assemectric encryption with the public and private keys of sender and receiver for both encryption and signatures. Limitations: slow, size limit. <br>
 
-**Version 2 :**
+**Version 2 :**<br>
+
 ![image](./assets/photos/Version1Photo1.jpg)
-<br>
-Generating a shared private key for semmectric encryption. Using RSA for sending the shared key and AES for the file encryption. Using digital signatures. Limitations: lack of enchanced safety features such as password, jwts <br>
 
+Generating a shared private key for semmectric encryption. Using RSA for sending the shared key and AES for the file encryption. Using digital signatures. Limitations: lack of enchanced safety features such as password, jwts 
 <br>
 
-**Version 3 (Final Version):**
+
+
+**Version 3 (Final Version):**<br>
+
 ![image](./assets/photos/Version2Photo1.jpg)
-
-Pros: Added user login and registration, JWTs, captcha, jwt block list. <br>
+<br>
+Improvements: Added user login and registration, JWTs, captcha, jwt block list. <br>
