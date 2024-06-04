@@ -75,28 +75,28 @@ To use you must have Python 3.12 installed.
    ```sh
    git clone https://github.com/ConorCallanan2003/cryptography-assignment
     ```
-
 2. **Create virtual env and install dependencies - Client**:
     ```sh
-    cd cryptography-assignment/client
+    cd <PATH_TO_PROJECT>/cryptography-assignment/client
     python -m venv venv
     source venv/bin/activate
     pip install -r requirements.txt
    ```
 3. **Create virtual env and install dependencies - Server**:
     ```sh
-    cd cryptography-assignment/server
+    cd <PATH_TO_PROJECT>/cryptography-assignment/server
     python -m venv venv
     source venv/bin/activate
     pip install -r requirements.txt
     ```
 5. **Run the server**
     ```sh
+    cd <PATH_TO_PROJECT>/cryptography-assignment/server
     python -m uvicorn server:app
     ```
 6. **Run the client**
     ```sh
-    cd cryptography-assignment/client
+    cd <PATH_TO_PROJECT>/cryptography-assignment/client
     python client.py
     ```
 ## Planning
